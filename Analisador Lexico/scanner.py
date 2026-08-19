@@ -1,6 +1,6 @@
 import re
-
-# Listando tokens
+import json
+import sys
 
 TOKEN_SPEC = [
     ("AUTO",       r"\bauto\b"),
@@ -35,18 +35,24 @@ TOKEN_SPEC = [
     ("VOID",       r"\bvoid\b"),
     ("VOLATILE",   r"\bvolatile\b"),
     ("WHILE",      r"\bwhile\b"),
+    ("BOOL",       r"\bbool\b"),
+    ("TRUE",       r"\btrue\b"),
+    ("FALSE",      r"\bfalse\b"),
+    ("PRINT",      r"\bprint\b"),
+
+
+    ("COMMENT",       r"//[^\n]*"),
+    ("BLOCK_COMMENT", r"/\*[\s\S]*?\*/"),
 
     ("IDENT",      r"\b[a-zA-Z_][a-zA-Z0-9_]*\b"),
 
-    ("NUMBER", r"\b[0-9]+(?:\.[0-9]+)?\b"),
-
+    ("FLOAT_LIT", r"\b[0-9]+\.[0-9]+\b"),
+    ("INT_LIT",   r"\b[0-9]+\b"),
 
     ("INCREMENT",  r"\+\+"),
     ("DECREMENT",  r"--"),
     ("PLUS",       r"\+"),
     ("MINUS",      r"-"),
-    ("COMMENT",    r"//[^\n]*"),
-    ("BLOCK_COMMENT", r"/\*[\s\S]*?\*/"),
     ("MULT",       r"\*"),
     ("DIV",        r"/"),
     ("MOD",        r"%"),
@@ -82,11 +88,12 @@ TOKEN_SPEC = [
     ("COLON",      r":"),
     ("QUESTION",   r"\?"),
 
-    ("STRING",     r'"([^"\\]|\\.)*"'),
-    ("CHAR_LITERAL", r"'([^'\\]|\\.)'"),
+    ("STRING_LIT",       r'"([^"\\]|\\.)*"'),
+    ("CHAR_LIT", r"'([^'\\]|\\.)'"),
 
     ("WHITESPACE", r"\s+"),
 ]
+
 
 tok_regex = "|".join(
     f"(?P<{name}>{pattern})"
@@ -95,17 +102,43 @@ tok_regex = "|".join(
 
 get_token = re.compile(tok_regex).match
 
+
+def get_attribute(tipo, valor):
+
+    if tipo == "IDENT":
+        return valor
+
+    if tipo == "INT_LIT":
+        return int(valor)
+
+    if tipo == "FLOAT_LIT":
+        return float(valor)
+
+    if tipo == "STRING_LIT":
+        return valor[1:-1]
+
+    if tipo == "CHAR_LIT":
+        return valor[1:-1]
+
+    return None
+
+
+
 def lexer(codigo):
+
     pos = 0
     linha = 1
     coluna = 1
 
     while pos < len(codigo):
+
         match = get_token(codigo, pos)
 
         if not match:
             raise SyntaxError(
-                f"Caractere inválido na linha {linha} e na coluna {coluna}: {codigo[pos]!r}"
+                f"Caractere inválido na linha "
+                f"{linha} e na coluna {coluna}: "
+                f"{codigo[pos]!r}"
             )
 
         tipo = match.lastgroup
@@ -124,16 +157,36 @@ def lexer(codigo):
         else:
             coluna += len(valor)
 
+        # Ignora espaços e comentários
         if tipo in ("WHITESPACE", "COMMENT", "BLOCK_COMMENT"):
             continue
 
-        print(
-            f"Linha: {linha_inicio:<3} "
-            f"Coluna: {coluna_inicio:<3} "
-            f"Token: {tipo:<12} "
-            f"Valor: {valor!r}")
+        attribute = get_attribute(tipo, valor)
+
+        token = {
+            "token": tipo,
+            "lexeme": valor,
+            "attribute": attribute,
+            "line": linha_inicio,
+            "column": coluna_inicio
+        }
+
+        print(json.dumps(token, ensure_ascii=False))
+
+    # EOF
+    token = {
+        "token": "EOF",
+        "lexeme": "",
+        "attribute": None,
+        "line": linha,
+        "column": coluna
+    }
+
+    print(json.dumps(token, ensure_ascii=False))
+
 
 def ler_arquivo(nome_arquivo):
+
     try:
         with open(nome_arquivo, "r", encoding="utf-8") as arquivo:
             return arquivo.read()
@@ -144,5 +197,12 @@ def ler_arquivo(nome_arquivo):
         )
 
 
-codigo = ler_arquivo("codigo")
+if len(sys.argv) != 2:
+    print("Uso: python scanner.py <arquivo.c>")
+    sys.exit(1)
+
+nome_arquivo = sys.argv[1]
+
+codigo = ler_arquivo(nome_arquivo)
 lexer(codigo)
+
