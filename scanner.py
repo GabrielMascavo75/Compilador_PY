@@ -1,10 +1,3 @@
-# Codigo de teste
-
-# import re
-# total = 2 + 3 * 4
-# print (total)
-
-
 import re
 
 # Listando tokens
@@ -45,12 +38,15 @@ TOKEN_SPEC = [
 
     ("IDENT",      r"\b[a-zA-Z_][a-zA-Z0-9_]*\b"),
 
-    ("NUMBER",     r"\b[0-9]+\b"),
+    ("NUMBER", r"\b[0-9]+(?:\.[0-9]+)?\b"),
+
 
     ("INCREMENT",  r"\+\+"),
     ("DECREMENT",  r"--"),
     ("PLUS",       r"\+"),
     ("MINUS",      r"-"),
+    ("COMMENT",    r"//[^\n]*"),
+    ("BLOCK_COMMENT", r"/\*[\s\S]*?\*/"),
     ("MULT",       r"\*"),
     ("DIV",        r"/"),
     ("MOD",        r"%"),
@@ -86,9 +82,6 @@ TOKEN_SPEC = [
     ("COLON",      r":"),
     ("QUESTION",   r"\?"),
 
-    ("COMMENT",    r"//[^\n]*"),
-    ("BLOCK_COMMENT", r"/\*[\s\S]*?\*/"),
-
     ("STRING",     r'"([^"\\]|\\.)*"'),
     ("CHAR_LITERAL", r"'([^'\\]|\\.)'"),
 
@@ -104,30 +97,52 @@ get_token = re.compile(tok_regex).match
 
 def lexer(codigo):
     pos = 0
+    linha = 1
+    coluna = 1
 
     while pos < len(codigo):
         match = get_token(codigo, pos)
 
         if not match:
             raise SyntaxError(
-                f"Caractere inválido na posição {pos}: {codigo[pos]!r}"
+                f"Caractere inválido na linha {linha} e na coluna {coluna}: {codigo[pos]!r}"
             )
 
         tipo = match.lastgroup
         valor = match.group()
 
+        linha_inicio = linha
+        coluna_inicio = coluna
+
         pos = match.end()
+
+        linhas = valor.split("\n")
+
+        if len(linhas) > 1:
+            linha += len(linhas) - 1
+            coluna = len(linhas[-1]) + 1
+        else:
+            coluna += len(valor)
 
         if tipo in ("WHITESPACE", "COMMENT", "BLOCK_COMMENT"):
             continue
 
-        print(tipo, valor)
+        print(
+            f"Linha: {linha_inicio:<3} "
+            f"Coluna: {coluna_inicio:<3} "
+            f"Token: {tipo:<12} "
+            f"Valor: {valor!r}")
 
-codigo = """
-int main() {
-int 2total = 2 + 3 * 4;
-// mostra o resultado
-print(total); return 0; }
-"""
+def ler_arquivo(nome_arquivo):
+    try:
+        with open(nome_arquivo, "r", encoding="utf-8") as arquivo:
+            return arquivo.read()
 
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Arquivo não encontrado: {nome_arquivo}"
+        )
+
+
+codigo = ler_arquivo("codigo")
 lexer(codigo)
