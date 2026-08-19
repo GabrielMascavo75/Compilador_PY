@@ -1,3 +1,5 @@
+\* Esse é um exemplo de código em C disponiibilizado pelo professor. Qualquer outro código pode ser implementado para ser escaneado \*
+
 void mostrarMenu() {
     print("1 - somar");
     print("2 - sair");
