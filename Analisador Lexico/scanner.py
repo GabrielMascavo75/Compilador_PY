@@ -2,99 +2,123 @@ import re
 import json
 import sys
 
+
+# Sequências de escape válidas
+ESCAPE = r"\\(?:n|t|\\|'|\")"
+
+
 TOKEN_SPEC = [
-    ("AUTO",       r"\bauto\b"),
-    ("BREAK",      r"\bbreak\b"),
-    ("CASE",       r"\bcase\b"),
-    ("CHAR",       r"\bchar\b"),
-    ("CONST",      r"\bconst\b"),
-    ("CONTINUE",   r"\bcontinue\b"),
-    ("DEFAULT",    r"\bdefault\b"),
-    ("DO",         r"\bdo\b"),
-    ("DOUBLE",     r"\bdouble\b"),
-    ("ELSE",       r"\belse\b"),
-    ("ENUM",       r"\benum\b"),
-    ("EXTERN",     r"\bextern\b"),
-    ("FLOAT",      r"\bfloat\b"),
-    ("FOR",        r"\bfor\b"),
-    ("GOTO",       r"\bgoto\b"),
-    ("IF",         r"\bif\b"),
-    ("INT",        r"\bint\b"),
-    ("LONG",       r"\blong\b"),
-    ("REGISTER",   r"\bregister\b"),
-    ("RETURN",     r"\breturn\b"),
-    ("SHORT",      r"\bshort\b"),
-    ("SIGNED",     r"\bsigned\b"),
-    ("SIZEOF",     r"\bsizeof\b"),
-    ("STATIC",     r"\bstatic\b"),
-    ("STRUCT",     r"\bstruct\b"),
-    ("SWITCH",     r"\bswitch\b"),
-    ("TYPEDEF",    r"\btypedef\b"),
-    ("UNION",      r"\bunion\b"),
-    ("UNSIGNED",   r"\bunsigned\b"),
-    ("VOID",       r"\bvoid\b"),
-    ("VOLATILE",   r"\bvolatile\b"),
-    ("WHILE",      r"\bwhile\b"),
-    ("BOOL",       r"\bbool\b"),
-    ("TRUE",       r"\btrue\b"),
-    ("FALSE",      r"\bfalse\b"),
-    ("PRINT",      r"\bprint\b"),
+
+    # =========================
+    # Palavras reservadas
+    # =========================
+
+    ("INT", r"\bint\b"),
+    ("FLOAT", r"\bfloat\b"),
+    ("BOOL", r"\bbool\b"),
+    ("CHAR", r"\bchar\b"),
+    ("VOID", r"\bvoid\b"),
+    ("IF", r"\bif\b"),
+    ("ELSE", r"\belse\b"),
+    ("WHILE", r"\bwhile\b"),
+    ("FOR", r"\bfor\b"),
+    ("RETURN", r"\breturn\b"),
+    ("BREAK", r"\bbreak\b"),
+    ("CONTINUE", r"\bcontinue\b"),
+    ("TRUE", r"\btrue\b"),
+    ("FALSE", r"\bfalse\b"),
+    ("PRINT", r"\bprint\b"),
+    ("READ", r"\bread\b"),
 
 
-    ("COMMENT",       r"//[^\n]*"),
+    # =========================
+    # Comentários inválidos
+    # =========================
+
+    # Comentários válidos PRIMEIRO
+    ("COMMENT", r"//[^\n]*"),
     ("BLOCK_COMMENT", r"/\*[\s\S]*?\*/"),
 
-    ("IDENT",      r"\b[a-zA-Z_][a-zA-Z0-9_]*\b"),
+    # Comentário que começa mas não termina
+    ("UNTERMINATED_BLOCK_COMMENT", r"/\*[\s\S]*$"),
 
-    ("FLOAT_LIT", r"\b[0-9]+\.[0-9]+\b"),
-    ("INT_LIT",   r"\b[0-9]+\b"),
 
-    ("INCREMENT",  r"\+\+"),
-    ("DECREMENT",  r"--"),
-    ("PLUS",       r"\+"),
-    ("MINUS",      r"-"),
-    ("MULT",       r"\*"),
-    ("DIV",        r"/"),
-    ("MOD",        r"%"),
+    # =========================
+    # Strings e caracteres
+    # =========================
 
-    ("EQ",         r"=="),
-    ("NE",         r"!="),
-    ("LE",         r"<="),
-    ("GE",         r">="),
-    ("LT",         r"<"),
-    ("GT",         r">"),
+    # Casos válidos
+    ("STRING_LIT", rf'"(?:[^"\\]|{ESCAPE})*"'),
+    ("CHAR_LIT", rf"'(?:[^'\\]|{ESCAPE})'"),
 
-    ("AND",        r"&&"),
-    ("OR",         r"\|\|"),
-    ("NOT",        r"!"),
+    # Casos inválidos
+    ("UNTERMINATED_STRING", r'"[^"\n)]*'),
+    ("UNTERMINATED_CHAR", r"'[^\n]*"),
 
-    ("BIT_AND",    r"&"),
-    ("BIT_OR",     r"\|"),
-    ("BIT_XOR",    r"\^"),
-    ("BIT_NOT",    r"~"),
 
-    ("ASSIGN",     r"="),
+    # =========================
+    # Identificadores e números
+    # =========================
 
-    ("LPAREN",     r"\("),
-    ("RPAREN",     r"\)"),
-    ("LBRACE",     r"\{"),
-    ("RBRACE",     r"\}"),
-    ("LBRACKET",   r"\["),
-    ("RBRACKET",   r"\]"),
+    ("IDENT", r"[a-zA-Z_][a-zA-Z0-9_]*"),
 
-    ("SEMICOLON",  r";"),
-    ("COMMA",      r","),
-    ("DOT",        r"\."),
-    ("COLON",      r":"),
-    ("QUESTION",   r"\?"),
+    ("FLOAT_LIT", r"[0-9]+\.[0-9]+"),
 
-    ("STRING_LIT",       r'"([^"\\]|\\.)*"'),
-    ("CHAR_LIT", r"'([^'\\]|\\.)'"),
+    ("INT_LIT", r"[0-9]+"),
+
+
+    # =========================
+    # Operadores
+    # =========================
+
+    ("EQ", r"=="),
+    ("NE", r"!="),
+    ("LE", r"<="),
+    ("GE", r">="),
+    ("AND", r"&&"),
+    ("OR", r"\|\|"),
+
+    ("PLUS", r"\+"),
+    ("MINUS", r"-"),
+    ("STAR", r"\*"),
+    ("SLASH", r"/"),
+    ("PERCENT", r"%"),
+
+    ("LT", r"<"),
+    ("GT", r">"),
+    ("NOT", r"!"),
+    ("ASSIGN", r"="),
+
+
+    # =========================
+    # Delimitadores
+    # =========================
+
+    ("LPAREN", r"\("),
+    ("RPAREN", r"\)"),
+
+    ("LBRACE", r"\{"),
+    ("RBRACE", r"\}"),
+
+    ("LBRACKET", r"\["),
+    ("RBRACKET", r"\]"),
+
+    ("SEMICOLON", r";"),
+    ("COMMA", r","),
+
+    # Ponto
+    ("DOT", r"\."),
+
+
+    # =========================
+    # Espaços e quebras de linha
+    # =========================
 
     ("WHITESPACE", r"\s+"),
 ]
 
 
+# Junta todos os padrões em uma única expressão regular
 tok_regex = "|".join(
     f"(?P<{name}>{pattern})"
     for name, pattern in TOKEN_SPEC
@@ -123,23 +147,50 @@ def get_attribute(tipo, valor):
     return None
 
 
-
 def lexer(codigo):
 
     pos = 0
     linha = 1
     coluna = 1
 
+    # Guarda se ocorreu algum erro durante a análise
+    teve_erro = False
+
+
     while pos < len(codigo):
 
         match = get_token(codigo, pos)
 
+
+        # =========================
+        # Símbolo desconhecido
+        # =========================
+
         if not match:
-            raise SyntaxError(
-                f"Caractere inválido na linha "
-                f"{linha} e na coluna {coluna}: "
-                f"{codigo[pos]!r}"
-            )
+
+            erro = {
+                "error": "UNKNOWN_SYMBOL",
+                "lexeme": codigo[pos],
+                "line": linha,
+                "column": coluna
+            }
+
+            print(json.dumps(erro, ensure_ascii=False))
+
+            teve_erro = True
+
+            # Avança um caractere para evitar loop infinito
+            if codigo[pos] == "\n":
+                linha += 1
+                coluna = 1
+            else:
+                coluna += 1
+
+            pos += 1
+
+            # Continua analisando o restante do código
+            continue
+
 
         tipo = match.lastgroup
         valor = match.group()
@@ -149,17 +200,99 @@ def lexer(codigo):
 
         pos = match.end()
 
+
+        # =========================
+        # Atualiza linha e coluna
+        # =========================
+
         linhas = valor.split("\n")
 
         if len(linhas) > 1:
+
             linha += len(linhas) - 1
             coluna = len(linhas[-1]) + 1
+
         else:
+
             coluna += len(valor)
 
-        # Ignora espaços e comentários
-        if tipo in ("WHITESPACE", "COMMENT", "BLOCK_COMMENT"):
+
+        # =========================
+        # Erro: string não terminada
+        # =========================
+
+        if tipo == "UNTERMINATED_STRING":
+
+            erro = {
+                "error": "UNTERMINATED_STRING",
+                "lexeme": valor,
+                "line": linha_inicio,
+                "column": coluna_inicio
+            }
+
+            print(json.dumps(erro, ensure_ascii=False))
+
+            teve_erro = True
+
             continue
+
+
+        # =========================
+        # Erro: caractere não terminado
+        # =========================
+
+        if tipo == "UNTERMINATED_CHAR":
+
+            erro = {
+                "error": "UNTERMINATED_CHAR",
+                "lexeme": valor,
+                "line": linha_inicio,
+                "column": coluna_inicio
+            }
+
+            print(json.dumps(erro, ensure_ascii=False))
+
+            teve_erro = True
+
+            continue
+
+
+        # =========================
+        # Erro: comentário não terminado
+        # =========================
+
+        if tipo == "UNTERMINATED_BLOCK_COMMENT":
+
+            erro = {
+                "error": "UNTERMINATED_BLOCK_COMMENT",
+                "lexeme": valor,
+                "line": linha_inicio,
+                "column": coluna_inicio
+            }
+
+            print(json.dumps(erro, ensure_ascii=False))
+
+            teve_erro = True
+
+            continue
+
+
+        # =========================
+        # Ignora espaços e comentários
+        # =========================
+
+        if tipo in (
+            "WHITESPACE",
+            "COMMENT",
+            "BLOCK_COMMENT"
+        ):
+
+            continue
+
+
+        # =========================
+        # Token válido
+        # =========================
 
         attribute = get_attribute(tipo, valor)
 
@@ -173,7 +306,11 @@ def lexer(codigo):
 
         print(json.dumps(token, ensure_ascii=False))
 
+
+    # =========================
     # EOF
+    # =========================
+
     token = {
         "token": "EOF",
         "lexeme": "",
@@ -185,24 +322,59 @@ def lexer(codigo):
     print(json.dumps(token, ensure_ascii=False))
 
 
+    # Se ocorreu algum erro, retorna 2.
+    # Caso contrário, retorna 0.
+    if teve_erro:
+        return 2
+
+    return 0
+
+
 def ler_arquivo(nome_arquivo):
 
     try:
-        with open(nome_arquivo, "r", encoding="utf-8") as arquivo:
+
+        with open(
+            nome_arquivo,
+            "r",
+            encoding="utf-8"
+        ) as arquivo:
+
             return arquivo.read()
 
     except FileNotFoundError:
+
         raise FileNotFoundError(
             f"Arquivo não encontrado: {nome_arquivo}"
         )
 
 
-if len(sys.argv) != 2:
-    print("Uso: python scanner.py <arquivo.c>")
-    sys.exit(1)
+def main():
 
-nome_arquivo = sys.argv[1]
+    if len(sys.argv) != 2:
 
-codigo = ler_arquivo(nome_arquivo)
-lexer(codigo)
+        print("Uso: python scanner.py <arquivo.c>")
 
+        return 1
+
+
+    nome_arquivo = sys.argv[1]
+
+
+    try:
+
+        codigo = ler_arquivo(nome_arquivo)
+
+        return lexer(codigo)
+
+
+    except FileNotFoundError as erro:
+
+        print(erro)
+
+        return 1
+
+
+if __name__ == "__main__":
+
+    sys.exit(main())
