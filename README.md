@@ -1,5 +1,5 @@
 # Compilador_PY
-Compilador em python para receber linguagemC  
+Compilador em python para receber linguagem C  
 **Feito pelos alunos:** Cauan Lemos Souza, Filipe Valle Moreira, Gabriel Macedo de Araújo Vieira e Guilherme Pinheiro
   
 # Apresentação sobre o Analisador Léxico
