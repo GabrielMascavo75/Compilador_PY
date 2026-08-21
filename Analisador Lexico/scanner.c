@@ -13,99 +13,103 @@ typedef struct {
     const char *pattern;
 } TokenSpec;
 
+// Sequências de escape válidas
+#define ESCAPE "\\\\(?:n|t|\\\\|'|\")"
+
 TokenSpec TOKEN_SPEC[] = {
 
-    {"AUTO",       "auto"},
-    {"BREAK",      "break"},
-    {"CASE",       "case"},
-    {"CHAR",       "char"},
-    {"CONST",      "const"},
-    {"CONTINUE",   "continue"},
-    {"DEFAULT",    "default"},
-    {"DO",         "do"},
-    {"DOUBLE",     "double"},
-    {"ELSE",       "else"},
-    {"ENUM",       "enum"},
-    {"EXTERN",     "extern"},
-    {"FLOAT",      "float"},
-    {"FOR",        "for"},
-    {"GOTO",       "goto"},
-    {"IF",         "if"},
-    {"INT",        "int"},
-    {"LONG",       "long"},
-    {"REGISTER",   "register"},
-    {"RETURN",     "return"},
-    {"SHORT",      "short"},
-    {"SIGNED",     "signed"},
-    {"SIZEOF",     "sizeof"},
-    {"STATIC",     "static"},
-    {"STRUCT",     "struct"},
-    {"SWITCH",     "switch"},
-    {"TYPEDEF",    "typedef"},
-    {"UNION",      "union"},
-    {"UNSIGNED",   "unsigned"},
-    {"VOID",       "void"},
-    {"VOLATILE",   "volatile"},
-    {"WHILE",      "while"},
-    {"BOOL",       "bool"},
-    {"TRUE",       "true"},
-    {"FALSE",      "false"},
-    {"PRINT",      "print"},
+    // =========================
+    // Palavras reservadas
+    // =========================
+    {"INT",       "\\bint\\b"},
+    {"FLOAT",     "\\bfloat\\b"},
+    {"BOOL",      "\\bbool\\b"},
+    {"CHAR",      "\\bchar\\b"},
+    {"VOID",      "\\bvoid\\b"},
+    {"IF",        "\\bif\\b"},
+    {"ELSE",      "\\belse\\b"},
+    {"WHILE",     "\\bwhile\\b"},
+    {"FOR",       "\\bfor\\b"},
+    {"RETURN",    "\\breturn\\b"},
+    {"BREAK",     "\\bbreak\\b"},
+    {"CONTINUE",  "\\bcontinue\\b"},
+    {"TRUE",      "\\btrue\\b"},
+    {"FALSE",     "\\bfalse\\b"},
+    {"PRINT",     "\\bprint\\b"},
+    {"READ",      "\\bread\\b"},
 
-    {"COMMENT",       "//[^\n]*"},
-    {"BLOCK_COMMENT", "/\\*[\\s\\S]*\\*/"},
+    // =========================
+    // Comentários
+    // =========================
+    {"COMMENT",                "//[^\\n]*"},
+    {"BLOCK_COMMENT",          "/\\*([^*]|\\*+[^*/])*\\*+/"},
+    {"UNTERMINATED_BLOCK_COMMENT", "/\\*([^*]|\\*+[^*/])*$"},
 
-    {"IDENT",      "[a-zA-Z_][a-zA-Z0-9_]*"},
+    // =========================
+    // Strings e caracteres
+    // =========================
+    {"STRING_LIT",             "\"([^\"\\\\]|\\\\[nt\\\\'\"])*\""},
+    {"CHAR_LIT",               "'([^'\\\\]|\\\\[nt\\\\'\"])'"},
+    {"UNTERMINATED_STRING",    "\"[^\"\n)]*"},
+    {"UNTERMINATED_CHAR",      "'[^'\n]*"},
 
-    {"FLOAT_LIT",  "[0-9]+\\.[0-9]+"},
-    {"INT_LIT",    "[0-9]+"},
+    // =========================
+    // Identificadores e números
+    // =========================
+    {"IDENT",                  "[a-zA-Z_][a-zA-Z0-9_]*"},
+    {"FLOAT_LIT",              "[0-9]+\\.[0-9]+"},
+    {"INT_LIT",                "[0-9]+"},
 
-    {"INCREMENT",  "\\+\\+"},
-    {"DECREMENT",  "--"},
-    {"PLUS",       "\\+"},
-    {"MINUS",      "-"},
-    {"MULT",       "\\*"},
-    {"DIV",        "/"},
-    {"MOD",        "%"},
+    // =========================
+    // Operadores
+    // =========================
+    {"EQ",                     "=="},
+    {"NE",                     "!="},
+    {"LE",                     "<="},
+    {"GE",                     ">="},
+    {"AND",                    "&&"},
+    {"OR",                     "\\|\\|"},
+    {"PLUS",                   "\\+"},
+    {"MINUS",                  "-"},
+    {"STAR",                   "\\*"},
+    {"SLASH",                  "/"},
+    {"PERCENT",                "%"},
+    {"LT",                     "<"},
+    {"GT",                     ">"},
+    {"NOT",                    "!"},
+    {"ASSIGN",                 "="},
 
-    {"EQ",         "=="},
-    {"NE",         "!="},
-    {"LE",         "<="},
-    {"GE",         ">="},
-    {"LT",         "<"},
-    {"GT",         ">"},
+    // =========================
+    // Delimitadores
+    // =========================
+    {"LPAREN",                 "\\("},
+    {"RPAREN",                 "\\)"},
+    {"LBRACE",                 "\\{"},
+    {"RBRACE",                 "\\}"},
+    {"LBRACKET",               "\\["},
+    {"RBRACKET",               "\\]"},
+    {"SEMICOLON",              ";"},
+    {"COMMA",                  ","},
+    {"DOT",                    "\\."},
 
-    {"AND",        "&&"},
-    {"OR",         "\\|\\|"},
-    {"NOT",        "!"},
-
-    {"BIT_AND",    "&"},
-    {"BIT_OR",     "\\|"},
-    {"BIT_XOR",    "\\^"},
-    {"BIT_NOT",    "~"},
-
-    {"ASSIGN",     "="},
-
-    {"LPAREN",     "\\("},
-    {"RPAREN",     "\\)"},
-    {"LBRACE",     "\\{"},
-    {"RBRACE",     "\\}"},
-    {"LBRACKET",   "\\["},
-    {"RBRACKET",   "\\]"},
-
-    {"SEMICOLON",  ";"},
-    {"COMMA",      ","},
-    {"DOT",        "\\."},
-    {"COLON",      ":"},
-    {"QUESTION",   "\\?"},
-
-    {"STRING_LIT", "\"([^\"\\\\]|\\\\.)*\""},
-    {"CHAR_LIT",   "'([^'\\\\]|\\\\.)'"},
-
-    {"WHITESPACE", "[[:space:]]+"}
+    // =========================
+    // Espaços e quebras de linha
+    // =========================
+    {"WHITESPACE",             "\\s+"}
 };
 
 #define TOKEN_COUNT (sizeof(TOKEN_SPEC) / sizeof(TOKEN_SPEC[0]))
+
+/* ============================================================
+   ESTRUTURA DE ERRO
+   ============================================================ */
+
+typedef struct {
+    char error[100];
+    char lexeme[4096];
+    int line;
+    int column;
+} Error;
 
 /* ============================================================
    FUNÇÕES AUXILIARES
@@ -115,526 +119,290 @@ int is_word_char(char c) {
     return isalnum((unsigned char)c) || c == '_';
 }
 
-
-/*
- * Verifica se um token de palavra possui limites de palavra,
- * equivalente ao \b usado no Python.
- */
-int valid_word_boundary(
-    const char *codigo,
-    int inicio,
-    int fim,
-    int tamanho
-) {
+int valid_word_boundary(const char *codigo, int inicio, int fim, int tamanho) {
     if (inicio > 0 && is_word_char(codigo[inicio - 1])) {
         return 0;
     }
-
     if (fim < tamanho && is_word_char(codigo[fim])) {
         return 0;
     }
-
     return 1;
 }
 
-
-/*
- * Faz o escape necessário para produzir uma string JSON válida.
- */
 void print_json_string(const char *str) {
-
     putchar('"');
-
     while (*str) {
-
         switch (*str) {
-
-            case '"':
-                printf("\\\"");
-                break;
-
-            case '\\':
-                printf("\\\\");
-                break;
-
-            case '\n':
-                printf("\\n");
-                break;
-
-            case '\r':
-                printf("\\r");
-                break;
-
-            case '\t':
-                printf("\\t");
-                break;
-
-            default:
-                putchar(*str);
-                break;
+            case '"':  printf("\\\""); break;
+            case '\\': printf("\\\\"); break;
+            case '\n': printf("\\n"); break;
+            case '\r': printf("\\r"); break;
+            case '\t': printf("\\t"); break;
+            default:   putchar(*str); break;
         }
-
         str++;
     }
-
     putchar('"');
 }
 
+int is_reserved_word(const char *name) {
+    const char *reserved[] = {
+        "INT", "FLOAT", "BOOL", "CHAR", "VOID", "IF", "ELSE",
+        "WHILE", "FOR", "RETURN", "BREAK", "CONTINUE", "TRUE",
+        "FALSE", "PRINT", "READ"
+    };
+    
+    for (int i = 0; i < sizeof(reserved)/sizeof(reserved[0]); i++) {
+        if (strcmp(name, reserved[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 /* ============================================================
    GET_ATTRIBUTE
    ============================================================ */
 
-void get_attribute(
-    const char *tipo,
-    const char *valor,
-    char *saida,
-    size_t tamanho
-) {
-
+void get_attribute(const char *tipo, const char *valor, char *saida, size_t tamanho) {
     if (strcmp(tipo, "IDENT") == 0) {
-
-        snprintf(
-            saida,
-            tamanho,
-            "\"%s\"",
-            valor
-        );
-
+        snprintf(saida, tamanho, "\"%s\"", valor);
         return;
     }
-
+    
     if (strcmp(tipo, "INT_LIT") == 0) {
-
-        snprintf(
-            saida,
-            tamanho,
-            "%d",
-            atoi(valor)
-        );
-
+        snprintf(saida, tamanho, "%d", atoi(valor));
         return;
     }
-
+    
     if (strcmp(tipo, "FLOAT_LIT") == 0) {
-
-        snprintf(
-            saida,
-            tamanho,
-            "%f",
-            atof(valor)
-        );
-
+        snprintf(saida, tamanho, "%f", atof(valor));
         return;
     }
-
-    if (strcmp(tipo, "STRING_LIT") == 0) {
-
+    
+    if (strcmp(tipo, "STRING_LIT") == 0 || strcmp(tipo, "CHAR_LIT") == 0) {
         int len = strlen(valor);
-
         if (len >= 2) {
-
             char temp[4096];
-
-            strncpy(
-                temp,
-                valor + 1,
-                len - 2
-            );
-
+            strncpy(temp, valor + 1, len - 2);
             temp[len - 2] = '\0';
-
-            snprintf(
-                saida,
-                tamanho,
-                "\"%s\"",
-                temp
-            );
+            snprintf(saida, tamanho, "\"%s\"", temp);
         }
-
         return;
     }
-
-    if (strcmp(tipo, "CHAR_LIT") == 0) {
-
-        int len = strlen(valor);
-
-        if (len >= 2) {
-
-            char temp[256];
-
-            strncpy(
-                temp,
-                valor + 1,
-                len - 2
-            );
-
-            temp[len - 2] = '\0';
-
-            snprintf(
-                saida,
-                tamanho,
-                "\"%s\"",
-                temp
-            );
-        }
-
-        return;
-    }
-
-    /*
-     * Python retorna None para os demais tipos.
-     */
-    snprintf(
-        saida,
-        tamanho,
-        "null"
-    );
+    
+    snprintf(saida, tamanho, "null");
 }
 
+/* ============================================================
+   IMPRIMIR ERRO
+   ============================================================ */
+
+void print_error(const char *error_type, const char *lexeme, int line, int column) {
+    printf("{\"error\":");
+    print_json_string(error_type);
+    printf(",\"lexeme\":");
+    print_json_string(lexeme);
+    printf(",\"line\":%d,\"column\":%d}\n", line, column);
+}
 
 /* ============================================================
    LEXER
    ============================================================ */
 
-void lexer(const char *codigo) {
-
+int lexer(const char *codigo) {
     int pos = 0;
     int linha = 1;
     int coluna = 1;
-
     int tamanho_codigo = strlen(codigo);
-
+    int teve_erro = 0;
+    
+    // Compila todas as regex uma vez
+    regex_t regexes[TOKEN_COUNT];
+    int regex_compiled[TOKEN_COUNT];
+    
+    for (int i = 0; i < TOKEN_COUNT; i++) {
+        regex_compiled[i] = 0;
+        if (regcomp(&regexes[i], TOKEN_SPEC[i].pattern, REG_EXTENDED) == 0) {
+            regex_compiled[i] = 1;
+        }
+    }
+    
     while (pos < tamanho_codigo) {
-
         int encontrou = 0;
-
-        char tipo[100];
-        char valor[4096];
-
         int tamanho_match = 0;
-
-        /*
-         * Tenta cada token na mesma ordem do TOKEN_SPEC
-         */
+        int match_index = -1;
+        char valor[4096] = {0};
+        
+        // Tenta cada token
         for (int i = 0; i < TOKEN_COUNT; i++) {
-
-            regex_t regex;
+            if (!regex_compiled[i]) continue;
+            
             regmatch_t match;
-
-            int resultado = regcomp(
-                &regex,
-                TOKEN_SPEC[i].pattern,
-                REG_EXTENDED
-            );
-
-            if (resultado != 0) {
-                continue;
-            }
-
-            /*
-             * Cria uma string começando na posição atual.
-             */
             const char *inicio = codigo + pos;
-
-            resultado = regexec(
-                &regex,
-                inicio,
-                1,
-                &match,
-                0
-            );
-
-            if (resultado == 0 && match.rm_so == 0) {
-
+            
+            if (regexec(&regexes[i], inicio, 1, &match, 0) == 0 && match.rm_so == 0) {
                 int inicio_match = pos + match.rm_so;
                 int fim_match = pos + match.rm_eo;
-
-                /*
-                 * Tokens de palavras precisam respeitar
-                 * os limites de palavra.
-                 */
-                if (
-                    strcmp(TOKEN_SPEC[i].name, "AUTO") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "BREAK") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "CASE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "CHAR") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "CONST") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "CONTINUE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "DEFAULT") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "DO") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "DOUBLE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "ELSE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "ENUM") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "EXTERN") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "FLOAT") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "FOR") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "GOTO") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "IF") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "INT") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "LONG") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "REGISTER") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "RETURN") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "SHORT") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "SIGNED") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "SIZEOF") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "STATIC") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "STRUCT") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "SWITCH") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "TYPEDEF") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "UNION") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "UNSIGNED") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "VOID") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "VOLATILE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "WHILE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "BOOL") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "TRUE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "FALSE") == 0 ||
-                    strcmp(TOKEN_SPEC[i].name, "PRINT") == 0
-                ) {
-
-                    if (!valid_word_boundary(
-                            codigo,
-                            inicio_match,
-                            fim_match,
-                            tamanho_codigo
-                        )) {
-
-                        regfree(&regex);
+                
+                // Verifica limites de palavra para palavras reservadas
+                if (is_reserved_word(TOKEN_SPEC[i].name)) {
+                    if (!valid_word_boundary(codigo, inicio_match, fim_match, tamanho_codigo)) {
                         continue;
                     }
                 }
-
+                
                 tamanho_match = match.rm_eo;
-
-                strncpy(
-                    valor,
-                    inicio,
-                    tamanho_match
-                );
-
+                strncpy(valor, inicio, tamanho_match);
                 valor[tamanho_match] = '\0';
-
-                strcpy(
-                    tipo,
-                    TOKEN_SPEC[i].name
-                );
-
+                match_index = i;
                 encontrou = 1;
-
-                regfree(&regex);
-
                 break;
             }
-
-            regfree(&regex);
         }
-
-        /*
-         * Nenhum token encontrado.
-         */
+        
+        // Símbolo desconhecido
         if (!encontrou) {
-
-            fprintf(
-                stderr,
-                "Caractere inválido na linha %d e na coluna %d: '%c'\n",
-                linha,
-                coluna,
-                codigo[pos]
-            );
-
-            exit(1);
-        }
-
-        int linha_inicio = linha;
-        int coluna_inicio = coluna;
-
-        pos += tamanho_match;
-
-        /*
-         * Atualização de linha e coluna.
-         */
-        for (int i = 0; i < tamanho_match; i++) {
-
-            if (valor[i] == '\n') {
-
+            print_error("UNKNOWN_SYMBOL", (char[]){codigo[pos], '\0'}, linha, coluna);
+            teve_erro = 1;
+            
+            if (codigo[pos] == '\n') {
                 linha++;
                 coluna = 1;
-
             } else {
-
+                coluna++;
+            }
+            pos++;
+            continue;
+        }
+        
+        char *tipo = (char *)TOKEN_SPEC[match_index].name;
+        int linha_inicio = linha;
+        int coluna_inicio = coluna;
+        
+        pos += tamanho_match;
+        
+        // Atualiza linha e coluna
+        for (int i = 0; i < tamanho_match; i++) {
+            if (valor[i] == '\n') {
+                linha++;
+                coluna = 1;
+            } else {
                 coluna++;
             }
         }
-
-        /*
-         * Ignora espaços e comentários.
-         */
-        if (
-            strcmp(tipo, "WHITESPACE") == 0 ||
-            strcmp(tipo, "COMMENT") == 0 ||
-            strcmp(tipo, "BLOCK_COMMENT") == 0
-        ) {
+        
+        // =========================
+        // Erro: string não terminada
+        // =========================
+        if (strcmp(tipo, "UNTERMINATED_STRING") == 0) {
+            print_error("UNTERMINATED_STRING", valor, linha_inicio, coluna_inicio);
+            teve_erro = 1;
             continue;
         }
-
-        /*
-         * Obtém o atributo.
-         */
+        
+        // =========================
+        // Erro: caractere não terminado
+        // =========================
+        if (strcmp(tipo, "UNTERMINATED_CHAR") == 0) {
+            print_error("UNTERMINATED_CHAR", valor, linha_inicio, coluna_inicio);
+            teve_erro = 1;
+            continue;
+        }
+        
+        // =========================
+        // Erro: comentário não terminado
+        // =========================
+        if (strcmp(tipo, "UNTERMINATED_BLOCK_COMMENT") == 0) {
+            print_error("UNTERMINATED_BLOCK_COMMENT", valor, linha_inicio, coluna_inicio);
+            teve_erro = 1;
+            continue;
+        }
+        
+        // =========================
+        // Ignora espaços e comentários
+        // =========================
+        if (strcmp(tipo, "WHITESPACE") == 0 ||
+            strcmp(tipo, "COMMENT") == 0 ||
+            strcmp(tipo, "BLOCK_COMMENT") == 0) {
+            continue;
+        }
+        
+        // =========================
+        // Token válido
+        // =========================
         char attribute[4096];
-
-        get_attribute(
-            tipo,
-            valor,
-            attribute,
-            sizeof(attribute)
-        );
-
-        /*
-         * Produz o mesmo formato JSON do Python.
-         */
+        get_attribute(tipo, valor, attribute, sizeof(attribute));
+        
         printf("{");
-
-        printf("\"token\":");
-        print_json_string(tipo);
-
-        printf(",");
-
-        printf("\"lexeme\":");
-        print_json_string(valor);
-
-        printf(",");
-
-        printf("\"attribute\":");
-        printf("%s", attribute);
-
-        printf(",");
-
-        printf("\"line\":%d", linha_inicio);
-
-        printf(",");
-
+        printf("\"token\":"); print_json_string(tipo); printf(",");
+        printf("\"lexeme\":"); print_json_string(valor); printf(",");
+        printf("\"attribute\":%s,", attribute);
+        printf("\"line\":%d,", linha_inicio);
         printf("\"column\":%d", coluna_inicio);
-
         printf("}\n");
     }
-
-    /*
-     * EOF
-     */
-    printf("{");
-
-    printf("\"token\":\"EOF\",");
-
-    printf("\"lexeme\":\"\",");
-
-    printf("\"attribute\":null,");
-
-    printf("\"line\":%d,", linha);
-
-    printf("\"column\":%d", coluna);
-
-    printf("}\n");
+    
+    // Libera as regex
+    for (int i = 0; i < TOKEN_COUNT; i++) {
+        if (regex_compiled[i]) {
+            regfree(&regexes[i]);
+        }
+    }
+    
+    // EOF
+    printf("{\"token\":\"EOF\",\"lexeme\":\"\",\"attribute\":null,\"line\":%d,\"column\":%d}\n", linha, coluna);
+    
+    return teve_erro ? 2 : 0;
 }
-
 
 /* ============================================================
    LER ARQUIVO
    ============================================================ */
 
 char *ler_arquivo(const char *nome_arquivo) {
-
-    FILE *arquivo = fopen(
-        nome_arquivo,
-        "rb"
-    );
-
+    FILE *arquivo = fopen(nome_arquivo, "rb");
     if (arquivo == NULL) {
-
-        fprintf(
-            stderr,
-            "Arquivo não encontrado: %s\n",
-            nome_arquivo
-        );
-
-        exit(1);
+        return NULL;
     }
-
-    /*
-     * Vai para o final do arquivo para descobrir
-     * seu tamanho.
-     */
-    fseek(
-        arquivo,
-        0,
-        SEEK_END
-    );
-
+    
+    fseek(arquivo, 0, SEEK_END);
     long tamanho = ftell(arquivo);
-
     rewind(arquivo);
-
-    /*
-     * Reserva memória.
-     */
-    char *codigo = malloc(
-        tamanho + 1
-    );
-
+    
+    char *codigo = malloc(tamanho + 1);
     if (codigo == NULL) {
-
-        fprintf(
-            stderr,
-            "Erro ao alocar memória.\n"
-        );
-
         fclose(arquivo);
-
-        exit(1);
+        return NULL;
     }
-
-    /*
-     * Lê o arquivo.
-     */
-    size_t lidos = fread(
-        codigo,
-        1,
-        tamanho,
-        arquivo
-    );
-
+    
+    size_t lidos = fread(codigo, 1, tamanho, arquivo);
     codigo[lidos] = '\0';
-
+    
     fclose(arquivo);
-
     return codigo;
 }
-
 
 /* ============================================================
    MAIN
    ============================================================ */
 
 int main(int argc, char *argv[]) {
-
     if (argc != 2) {
-
-        printf(
-            "Uso: scanner <arquivo.c>\n"
-        );
-
+        printf("Uso: python scanner.py <arquivo.c>\n");
         return 1;
     }
-
+    
     const char *nome_arquivo = argv[1];
-
-    char *codigo = ler_arquivo(
-        nome_arquivo
-    );
-
-    lexer(codigo);
-
+    char *codigo = ler_arquivo(nome_arquivo);
+    
+    if (codigo == NULL) {
+        fprintf(stderr, "Arquivo não encontrado: %s\n", nome_arquivo);
+        return 1;
+    }
+    
+    int resultado = lexer(codigo);
     free(codigo);
-
-    return 0;
+    
+    return resultado;
 }
