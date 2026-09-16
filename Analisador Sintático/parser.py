@@ -33,10 +33,11 @@ class Block:
         self.items = []
 
 class VarDecl:
-    def __init__(self, tipo, nome, inicializacao=None):
+    def __init__(self, tipo, nome, inicializacao=None, tamanho=None):
         self.tipo = tipo
         self.nome = nome
         self.inicializacao = inicializacao
+        self.tamanho = tamanho
 
 class Literal:
     def __init__(self, valor):
@@ -82,8 +83,48 @@ class IfStmt:
         self.corpo = corpo
         self.senao = senao
 
-class Parser:
+class WhileStmt:
+    def __init__(self, condicao, corpo):
+        self.condicao = condicao
+        self.corpo = corpo
 
+class ForStmt:
+    def __init__(self, inicializacao, condicao, atualizacao, corpo):
+        self.inicializacao = inicializacao
+        self.condicao = condicao
+        self.atualizacao = atualizacao
+        self.corpo = corpo
+
+class BreakStmt:
+    def __init__(self):
+        pass
+
+class ContinueStmt:
+    def __init__(self):
+        pass
+
+class PrintStmt:
+    def __init__(self, argumento):
+        self.argumento = argumento
+
+class ReadStmt:
+    def __init__(self, localizavel):
+        self.localizavel = localizavel
+
+class FunctionDecl:
+    def __init__(self, tipo_retorno, nome, parametros, corpo):
+        self.tipo_retorno = tipo_retorno
+        self.nome = nome
+        self.parametros = parametros
+        self.corpo = corpo
+
+class Parameter:
+    def __init__(self, tipo, nome, array=False):
+        self.tipo = tipo
+        self.nome = nome
+        self.array = array
+
+class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
         self.posicao = 0
@@ -123,6 +164,8 @@ class Parser:
         print(json.dumps(erro, ensure_ascii=False))
         self.teve_erro = True
 
+        self.avancar()
+
     def erro_main_duplicado(self):
         token = self.token_atual()
 
@@ -158,56 +201,71 @@ class Parser:
             return None
 
     def parse_tipo_retorno(self):
-
         token = self.token_atual()
 
         tipos = ["INT", "FLOAT", "BOOL", "CHAR", "VOID"]
 
         if token["token"] in tipos:
             self.avancar()
-        else:
-            self.erro_unexpected_token()
+            return token["lexeme"]
+
+        self.erro_unexpected_token()
+        return None
 
     def parse_identificador(self):
         token = self.token_atual()
 
-        if token["token"] == "IDENT":
-            self.avancar()
-        else:
+        if token["token"] != "IDENT":
             self.erro_unexpected_token()
+            return None
+
+        self.avancar()
+        return token["lexeme"]
 
     def parse_declaracao_global(self):
-        self.parse_tipo()
-        self.parse_identificador()
+        tipo = self.parse_tipo()
 
-        if self.token_atual()["token"] == "ASSIGN":
+        declaracoes = []
+
+        nome, inicializacao = self.parse_declarador()
+
+        if nome is not None:
+            declaracoes.append(VarDecl(tipo, nome, inicializacao))
+
+        while self.token_atual()["token"] == "COMMA":
             self.avancar()
-            self.parse_expressao()
+
+            nome, inicializacao = self.parse_declarador()
+
+            if nome is not None:
+                declaracoes.append(VarDecl(tipo, nome, inicializacao))
 
         self.consumir("SEMICOLON")
 
+        return declaracoes
+
     def parse_declaracao_funcao(self):
+        tipo_retorno = self.parse_tipo_retorno()
 
-        self.parse_tipo_retorno()
-
-        token = self.token_atual()
-
-        if token["token"] != "IDENT":
-            self.erro_unexpected_token()
-            return
-
-        nome = token["lexeme"]
-
-        self.parse_identificador()
+        nome = self.parse_identificador()
 
         self.consumir("LPAREN")
 
+        parametros = []
+
         if self.token_atual()["token"] != "RPAREN":
-            self.parse_parametros()
+            parametros = self.parse_parametros()
 
         self.consumir("RPAREN")
 
-        self.parse_bloco()
+        corpo = self.parse_bloco()
+
+        return FunctionDecl(
+            tipo_retorno,
+            nome,
+            parametros,
+            corpo
+        )
 
     def parse_parametro(self):
 
@@ -219,14 +277,36 @@ class Parser:
             self.consumir("RBRACKET")
 
     def parse_parametros(self):
+        parametros = []
 
-        self.parse_parametro()
+        tipo = self.parse_tipo()
+        nome = self.parse_identificador()
+
+        array = False
+
+        if self.token_atual()["token"] == "LBRACKET":
+            self.avancar()
+            self.consumir("RBRACKET")
+            array = True
+
+        parametros.append(Parameter(tipo, nome, array))
 
         while self.token_atual()["token"] == "COMMA":
             self.avancar()
-            self.parse_parametro()
 
-    # Expressões
+            tipo = self.parse_tipo()
+            nome = self.parse_identificador()
+
+            array = False
+
+            if self.token_atual()["token"] == "LBRACKET":
+                self.avancar()
+                self.consumir("RBRACKET")
+                array = True
+
+            parametros.append(Parameter(tipo, nome, array))
+
+        return parametros
 
     def parse_primario(self):
         token = self.token_atual()
@@ -320,8 +400,9 @@ class Parser:
     def parse_expressao_multiplicativa(self):
         esquerda = self.parse_expressao_unaria()
 
-        while self.token_atual()["token"] in ["MULT", "DIV", "MOD"]:
+        while self.token_atual()["token"] in ["STAR", "DIV", "MOD"]:
             operador = self.token_atual()["lexeme"]
+
             self.avancar()
 
             direita = self.parse_expressao_unaria()
@@ -410,7 +491,7 @@ class Parser:
             indice = self.parse_expressao()
             self.consumir("RBRACKET")
 
-            return (alvo, indice)
+            return ArrayAccess(alvo, indice)
 
         return alvo
 
@@ -441,27 +522,28 @@ class Parser:
 
         if token["token"] != "IDENT":
             self.erro_unexpected_token()
-            return None, None
+            return None, None, None
 
         nome = token["lexeme"]
         self.avancar()
 
         inicializacao = None
+        tamanho = None
 
         if self.token_atual()["token"] == "LBRACKET":
             self.avancar()
+
+            tamanho = self.token_atual()["attribute"]
             self.consumir("INT_LIT")
+
             self.consumir("RBRACKET")
 
         elif self.token_atual()["token"] == "ASSIGN":
             self.avancar()
 
-            token_expr = self.token_atual()
-            inicializacao = Literal(token_expr["attribute"])
+            inicializacao = self.parse_expressao()
 
-            self.parse_expressao()
-
-        return nome, inicializacao
+        return nome, inicializacao, tamanho
     # Declaração local
 
     def parse_declaracao_local(self):
@@ -469,21 +551,21 @@ class Parser:
 
         declaracoes = []
 
-        nome, inicializacao = self.parse_declarador()
+        nome, inicializacao, tamanho = self.parse_declarador()
 
         if nome is not None:
             declaracoes.append(
-                VarDecl(tipo, nome, inicializacao)
+                VarDecl(tipo, nome, inicializacao, tamanho)
             )
 
         while self.token_atual()["token"] == "COMMA":
             self.avancar()
 
-            nome, inicializacao = self.parse_declarador()
+            nome, inicializacao, tamanho = self.parse_declarador()
 
             if nome is not None:
                 declaracoes.append(
-                    VarDecl(tipo, nome, inicializacao)
+                    VarDecl(tipo, nome, inicializacao, tamanho)
                 )
 
         self.consumir("SEMICOLON")
@@ -508,10 +590,14 @@ class Parser:
         self.consumir("BREAK")
         self.consumir("SEMICOLON")
 
+        return BreakStmt()
+
 
     def parse_continue(self):
         self.consumir("CONTINUE")
         self.consumir("SEMICOLON")
+
+        return ContinueStmt()
 
 
     def parse_comando_expressao(self):
@@ -541,73 +627,90 @@ class Parser:
     def parse_while(self):
         self.consumir("WHILE")
         self.consumir("LPAREN")
-        self.parse_expressao()
+
+        condicao = self.parse_expressao()
+
         self.consumir("RPAREN")
 
-        self.parse_comando()
+        corpo = self.parse_comando()
+
+        return WhileStmt(condicao, corpo)
 
     def parse_for(self):
         self.consumir("FOR")
         self.consumir("LPAREN")
 
-        # Primeira expressão
+        inicializacao = None
+        condicao = None
+        atualizacao = None
+
         if self.token_atual()["token"] != "SEMICOLON":
-            self.parse_expressao()
+            inicializacao = self.parse_expressao()
+
         self.consumir("SEMICOLON")
 
-        # Segunda expressão
         if self.token_atual()["token"] != "SEMICOLON":
-            self.parse_expressao()
+            condicao = self.parse_expressao()
+
         self.consumir("SEMICOLON")
 
-        # Terceira expressão
         if self.token_atual()["token"] != "RPAREN":
-            self.parse_expressao()
+            atualizacao = self.parse_expressao()
+
         self.consumir("RPAREN")
 
-        self.parse_comando()
+        corpo = self.parse_comando()
+
+        return ForStmt(inicializacao, condicao, atualizacao, corpo)
 
     def parse_print(self):
         self.consumir("PRINT")
         self.consumir("LPAREN")
-        self.parse_argumentos()
+
+        argumento = self.parse_expressao()
+
         self.consumir("RPAREN")
         self.consumir("SEMICOLON")
+
+        return PrintStmt(argumento)
 
     def parse_read(self):
         self.consumir("READ")
         self.consumir("LPAREN")
-        self.parse_localizavel()
+
+        localizavel = self.parse_localizavel()
+
         self.consumir("RPAREN")
         self.consumir("SEMICOLON")
 
+        return ReadStmt(localizavel)
 
     def parse_comando(self):
         token = self.token_atual()["token"]
 
         if token == "IF":
-            self.parse_if()
+            return self.parse_if()
 
         elif token == "WHILE":
-            self.parse_while()
+            return self.parse_while()
 
         elif token == "FOR":
-            self.parse_for()
+            return self.parse_for()
 
         elif token == "RETURN":
             return self.parse_return()
 
         elif token == "BREAK":
-            self.parse_break()
+            return self.parse_break()
 
         elif token == "CONTINUE":
-            self.parse_continue()
+            return self.parse_continue()
 
         elif token == "PRINT":
-            self.parse_print()
+            return self.parse_print()
 
         elif token == "READ":
-            self.parse_read()
+            return self.parse_read()
 
         elif token == "LBRACE":
             self.parse_bloco()
@@ -714,11 +817,17 @@ class Parser:
 
             # Se for uma função
             elif token_depois_identificador == "LPAREN":
-                self.parse_declaracao_funcao()
+                funcao = self.parse_declaracao_funcao()
+
+                if funcao is not None:
+                    programa.function_declarations.append(funcao)
 
             # Se for uma declaração global
             elif token_depois_identificador in ["ASSIGN", "SEMICOLON"]:
-                self.parse_declaracao_global()
+                declaracoes = self.parse_declaracao_global()
+
+                if declaracoes:
+                    programa.global_declarations.extend(declaracoes)
 
             else:
                 self.erro_unexpected_token()
