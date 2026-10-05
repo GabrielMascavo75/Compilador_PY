@@ -1,19 +1,16 @@
-"""
-Nós da Árvore Sintática do MINIC.
 
-Cada nó guarda:
-  - seus filhos (atributos específicos de cada classe);
-  - linha e coluna de origem, usadas nos diagnósticos;
-  - campos de anotação preenchidos pelo analisador semântico
-    (tipo inferido e símbolo associado).
+# Nós da Árvore Sintática do MINIC.
 
-O método __str__ de cada nó reproduz exatamente o formato textual que o
-parser imprimia antes, para que a saída do --ast não mude.
-"""
+# Cada nó guarda:
+#   - seus filhos (atributos específicos de cada classe);
+#   - linha e coluna de origem, usadas nos diagnósticos;
+#   - campos de anotação preenchidos pelo analisador semântico (tipo inferido e símbolo associado).
 
+# O método __str__ de cada nó reproduz exatamente o formato textual que o
+# parser imprimia antes, para que a saída do --ast não mude.
 
 def _texto(no):
-    """Converte um nó opcional em texto (None vira NULL)."""
+    # Converte um nó opcional em texto (None vira NULL).
     return "NULL" if no is None else str(no)
 
 
