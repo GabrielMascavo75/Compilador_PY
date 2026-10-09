@@ -1,43 +1,1048 @@
+/*
+ * semantic.c — Análise semântica.
+ *
+ * Percorre a árvore produzida pelo parser, verificando nomes, escopos,
+ * tipos e regras contextuais (seções 5, 6 e 7 da especificação). Os
+ * diagnósticos seguem o catálogo SEMxxx do GABARITO.md.
+ */
+#include "util.h"
+#include "scanner.h"
 #include "semantic.h"
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdarg.h>
 
-enum { SEM001=1,SEM002,SEM003,SEM004,SEM005,SEM006,SEM007,SEM008,SEM009,SEM010,SEM011,SEM012,SEM013,SEM014,SEM015 };
-static const char*semcode(int c){static const char*x[]={"SEM001","SEM002","SEM003","SEM004","SEM005","SEM006","SEM007","SEM008","SEM009","SEM010","SEM011","SEM012","SEM013","SEM014","SEM015"};return x[c-1];}
-static const char*bas(Tipo t){switch(t.base){case TY_INT:return"int";case TY_FLOAT:return"float";case TY_BOOL:return"bool";case TY_CHAR:return"char";case TY_VOID:return"void";case TY_STRING:return"string";default:return"erro";}}
-const char*tipo_str(Tipo t){static char b[8][32];static int k=0;k=(k+1)%8;snprintf(b[k],sizeof b[k],"%s%s",bas(t),t.vetor?"[]":"");return b[k];}
-static int teq(Tipo a,Tipo b){return a.base==b.base&&a.vetor==b.vetor;}static int erro_t(Tipo t){return t.base==TY_ERRO;}static int num(Tipo t){return !t.vetor&&(t.base==TY_INT||t.base==TY_FLOAT||t.base==TY_CHAR);}static int inteiro(Tipo t){return !t.vetor&&(t.base==TY_INT||t.base==TY_CHAR);}
-static int comp(Tipo d,Tipo o){if(erro_t(d)||erro_t(o))return 1;if(d.vetor||o.vetor)return teq(d,o);if(d.base==o.base)return d.base!=TY_VOID&&d.base!=TY_STRING;return(d.base==TY_FLOAT&&(o.base==TY_INT||o.base==TY_CHAR))||(d.base==TY_INT&&o.base==TY_CHAR);}
-struct Simbolo {char*nome;char*categoria;Tipo tipo;int nivel,linha,coluna;Tipo*params;size_t nparams;long long tamanho;int tem_tamanho,inicializado,usado;};
-typedef struct {Simbolo**v;size_t n,cap;} Scope;typedef struct {Scope*v;size_t n,cap;} SymTable;
-struct Semantic {const char*fonte;size_t*inicio;size_t nlin;SymTable tab;DiagnosticoVec erros;Simbolo*funcao_atual;int nivel_laco;};
-static void pushsym(Scope*s,Simbolo*x){if(s->n==s->cap){s->cap=s->cap?2*s->cap:8;s->v=realloc(s->v,s->cap*sizeof(*s->v));}s->v[s->n++]=x;}static void opens(SymTable*t){if(t->n==t->cap){t->cap=t->cap?2*t->cap:4;t->v=realloc(t->v,t->cap*sizeof(*t->v));}t->v[t->n++]=(Scope){0};}static void closes(SymTable*t){Scope*s=&t->v[t->n-1];for(size_t i=0;i<s->n;i++){free(s->v[i]->nome);free(s->v[i]->categoria);free(s->v[i]->params);free(s->v[i]);}free(s->v);t->n--;}
-static Simbolo*findcur(SymTable*t,const char*n){if(!t->n)return NULL;Scope*s=&t->v[t->n-1];for(size_t i=0;i<s->n;i++)if(!strcmp(s->v[i]->nome,n))return s->v[i];return NULL;}static Simbolo*find(SymTable*t,const char*n){for(size_t j=t->n;j-->0;){Scope*s=&t->v[j];for(size_t i=0;i<s->n;i++)if(!strcmp(s->v[i]->nome,n))return s->v[i];}return NULL;}
-static void adderr(Semantic*s,int code,No*n,const char*f,...){va_list a,b;va_start(a,f);va_copy(b,a);int z=vsnprintf(NULL,0,f,a);va_end(a);Diagnostico d={strdup(semcode(code)),malloc(z+1),n?n->linha:0,n?n->coluna:0};vsnprintf(d.mensagem,z+1,f,b);va_end(b);if(s->erros.n==s->erros.cap){s->erros.cap=s->erros.cap?2*s->erros.cap:16;s->erros.v=realloc(s->erros.v,s->erros.cap*sizeof(Diagnostico));}s->erros.v[s->erros.n++]=d;}
-static void adderr_pos(Semantic*s,int code,int linha,int coluna,const char*f,...){va_list a,b;va_start(a,f);va_copy(b,a);int z=vsnprintf(NULL,0,f,a);va_end(a);Diagnostico d={strdup(semcode(code)),malloc(z+1),linha,coluna};vsnprintf(d.mensagem,z+1,f,b);va_end(b);if(s->erros.n==s->erros.cap){s->erros.cap=s->erros.cap?2*s->erros.cap:16;s->erros.v=realloc(s->erros.v,s->erros.cap*sizeof(Diagnostico));}s->erros.v[s->erros.n++]=d;}
-static const char*texto(Semantic*s,No*n){static char b[512];if(!n||!n->tem_fim||!s->fonte)return"";size_t ini=s->inicio[n->linha-1]+n->coluna-1,fim=s->inicio[n->fim_linha-1]+n->fim_coluna-1,len=fim>ini?fim-ini:0;if(len>=sizeof b)len=sizeof b-1;memcpy(b,s->fonte+ini,len);b[len]=0;return b;}
-static Tipo expr(Semantic*,No*,const char*);static void visit(Semantic*,No*);static void destino(Semantic*,No*,const char*);static int falls(No*);
-static long long constint(No*n,int*ok){if(!n){*ok=0;return 0;}if(n->kind==N_LITERAL&&n->u.literal.tipo_literal==L_INT){*ok=1;return n->u.literal.valor_int;}if(n->kind==N_UNARIA&&strcmp(n->u.un.operador,"-")==0){long long v=constint(n->u.un.operando,ok);return -v;}if(n->kind==N_BINARIA&&(strcmp(n->u.bin.operador,"+")==0||strcmp(n->u.bin.operador,"-")==0||strcmp(n->u.bin.operador,"*")==0)){int a,b;long long x=constint(n->u.bin.esquerda,&a),y=constint(n->u.bin.direita,&b);if(a&&b){*ok=1;if(n->u.bin.operador[0]=='+')return x+y;if(n->u.bin.operador[0]=='-')return x-y;return x*y;}}*ok=0;return 0;}
-static int hasbreak(No*n){if(!n)return 0;if(n->kind==N_BREAK)return 1;if(n->kind==N_BLOCO){for(size_t i=0;i<n->u.bloco.comandos.n;i++)if(hasbreak(n->u.bloco.comandos.v[i]))return 1;}if(n->kind==N_IF)return hasbreak(n->u.ifn.entao)||(n->u.ifn.senao&&hasbreak(n->u.ifn.senao));return 0;}
-static int infinite(No*n){No*c=n->kind==N_WHILE?n->u.whilen.condicao:n->u.forn.condicao;if(!c)return !hasbreak(n->kind==N_WHILE?n->u.whilen.corpo:n->u.forn.corpo);return c->kind==N_LITERAL&&c->u.literal.tipo_literal==L_BOOL&&c->u.literal.valor_bool&&!hasbreak(n->kind==N_WHILE?n->u.whilen.corpo:n->u.forn.corpo);}
-static void declare(Semantic*s,Simbolo*x){Simbolo*a=findcur(&s->tab,x->nome);if(a){adderr(s,SEM002,(No*)NULL,"“%s” já declarado neste escopo; declaração anterior na linha %d, coluna %d (%s).",x->nome,a->linha,a->coluna,a->categoria);return;}pushsym(&s->tab.v[s->tab.n-1],x);}
-static Tipo lit_type(No*n){switch(n->u.literal.tipo_literal){case L_INT:return(Tipo){TY_INT,0};case L_REAL:return(Tipo){TY_FLOAT,0};case L_BOOL:return(Tipo){TY_BOOL,0};case L_CHAR:return(Tipo){TY_CHAR,0};default:return(Tipo){TY_STRING,0};}}
-static Tipo expr_lit(Semantic*s,No*n){Tipo t=lit_type(n);if(n->u.literal.tipo_literal==L_STRING){adderr(s,SEM014,n,"Cadeia “%.*s” só é permitida como argumento de print.",(int)(strlen(n->u.literal.lexema)-2),n->u.literal.lexema+1);return(Tipo){TY_ERRO,0};}return t;}
-static Tipo expr_id(Semantic*s,No*n){Simbolo*x=find(&s->tab,n->u.ident.nome);if(!x){adderr(s,SEM001,n,"Identificador “%s” não declarado neste escopo.",n->u.ident.nome);return(Tipo){TY_ERRO,0};}n->simbolo=x;if(!strcmp(x->categoria,"FUNÇÃO")){adderr(s,SEM014,n,"“%s” é uma função e não pode ser usada sem chamada.",n->u.ident.nome);return(Tipo){TY_ERRO,0};}x->usado=1;return x->tipo;}
-static void destino(Semantic*s,No*a,const char*op){char pref[100];snprintf(pref,sizeof pref,"Destino de %s não é atribuível",op);if(a->kind==N_IDENT){Simbolo*x=find(&s->tab,a->u.ident.nome);if(!x){adderr(s,SEM001,a,"Identificador “%s” não declarado neste escopo.",a->u.ident.nome);a->tipo_sem=TY_ERRO;return;}a->simbolo=x;if(!strcmp(x->categoria,"FUNÇÃO")){adderr(s,SEM013,a,"%s; “%s” designa uma função, não uma variável ou elemento de vetor.",pref,a->u.ident.nome);return;}if(x->tipo.vetor){adderr(s,SEM013,a,"%s; “%s” designa um vetor inteiro, não uma variável ou elemento de vetor.",pref,a->u.ident.nome);return;}x->inicializado=1;a->tipo_sem=x->tipo.base;return;}if(a->kind==N_INDICE){expr(s,a,"como destino");return;}expr(s,a,NULL);const char*d=a->kind==N_LITERAL?"o literal":a->kind==N_CHAMADA?"a chamada":"a expressão";adderr(s,SEM013,a,"%s; %s “%s” não designa uma variável ou elemento de vetor.",pref,d,texto(s,a));}
-static Tipo expr_assign(Semantic*s,No*n){Tipo tv=expr(s,n->u.atrib.valor,"como expressão de atribuição");destino(s,n->u.atrib.alvo,"atribuição");Tipo ta=(Tipo){TY_ERRO,0};if(n->u.atrib.alvo->kind==N_IDENT&&n->u.atrib.alvo->simbolo)ta=((Simbolo*)n->u.atrib.alvo->simbolo)->tipo;else if(n->u.atrib.alvo->kind==N_INDICE)ta=(Tipo){(BaseType)n->u.atrib.alvo->tipo_sem,0};if(erro_t(ta)||erro_t(tv))return(Tipo){TY_ERRO,0};if(!comp(ta,tv)){adderr(s,SEM003,n->u.atrib.valor,"Não é possível atribuir %s a %s sem conversão permitida (destino “%s”; expressão “%s”).",tipo_str(tv),tipo_str(ta),texto(s,n->u.atrib.alvo),texto(s,n->u.atrib.valor));return(Tipo){TY_ERRO,0};}return ta;}
-static Tipo expr_un(Semantic*s,No*n){Tipo t=expr(s,n->u.un.operando,"como operando");if(erro_t(t))return t;if(!strcmp(n->u.un.operador,"!")){if(!teq(t,(Tipo){TY_BOOL,0})){adderr(s,SEM004,n,"Operador “!” exige operando bool; recebeu %s (expressão “%s”).",tipo_str(t),texto(s,n));return(Tipo){TY_ERRO,0};}return(Tipo){TY_BOOL,0};}if(!num(t)){adderr(s,SEM004,n,"Operador “-” exige operando numérico; recebeu %s (expressão “%s”).",tipo_str(t),texto(s,n));return(Tipo){TY_ERRO,0};}return t.base==TY_FLOAT?(Tipo){TY_FLOAT,0}:(Tipo){TY_INT,0};}
-static void checkdiv(Semantic*s,No*n){int ok=0;long long v=constint(n->u.bin.direita,&ok);if(ok&&v==0)adderr(s,SEM015,n->u.bin.direita,"Divisão por zero constante (expressão “%s”).",texto(s,n));}
-static Tipo expr_bin(Semantic*s,No*n){Tipo a=expr(s,n->u.bin.esquerda,"como operando"),b=expr(s,n->u.bin.direita,"como operando");if(erro_t(a)||erro_t(b))return(Tipo){TY_ERRO,0};const char*o=n->u.bin.operador;if(!strcmp(o,"&&")||!strcmp(o,"||")){if(!teq(a,(Tipo){TY_BOOL,0})||!teq(b,(Tipo){TY_BOOL,0})){adderr(s,SEM004,n,"Operador “%s” exige operandos bool; recebeu %s e %s (expressão “%s”).",o,tipo_str(a),tipo_str(b),texto(s,n));return(Tipo){TY_ERRO,0};}return(Tipo){TY_BOOL,0};}if(!strcmp(o,"==")||!strcmp(o,"!=")){if((num(a)&&num(b))||(teq(a,b)&&!a.vetor))return(Tipo){TY_BOOL,0};adderr(s,SEM004,n,"Operador “%s” exige operandos de tipos comparáveis; recebeu %s e %s (expressão “%s”).",o,tipo_str(a),tipo_str(b),texto(s,n));return(Tipo){TY_ERRO,0};}if(!strcmp(o,"<")||!strcmp(o,">")||!strcmp(o,"<=")||!strcmp(o,">=")){if(!num(a)||!num(b)){adderr(s,SEM004,n,"Operador “%s” exige operandos numéricos; recebeu %s e %s (expressão “%s”).",o,tipo_str(a),tipo_str(b),texto(s,n));return(Tipo){TY_ERRO,0};}return(Tipo){TY_BOOL,0};}if(!strcmp(o,"%")){if(!inteiro(a)||!inteiro(b)){adderr(s,SEM004,n,"Operador “%s” exige operandos inteiros; recebeu %s e %s (expressão “%s”).",o,tipo_str(a),tipo_str(b),texto(s,n));return(Tipo){TY_ERRO,0};}checkdiv(s,n);return(Tipo){TY_INT,0};}if(!num(a)||!num(b)){adderr(s,SEM004,n,"Operador “%s” exige operandos numéricos; recebeu %s e %s (expressão “%s”).",o,tipo_str(a),tipo_str(b),texto(s,n));return(Tipo){TY_ERRO,0};}if(!strcmp(o,"/"))checkdiv(s,n);return(a.base==TY_FLOAT||b.base==TY_FLOAT)?(Tipo){TY_FLOAT,0}:(Tipo){TY_INT,0};}
-static Tipo expr_call(Semantic*s,No*n){if(n->u.chamada.funcao->kind!=N_IDENT){adderr(s,SEM014,n,"Apenas funções nomeadas podem ser chamadas (expressão “%s”).",texto(s,n));for(size_t i=0;i<n->u.chamada.argumentos.n;i++)expr(s,n->u.chamada.argumentos.v[i],"como argumento");return(Tipo){TY_ERRO,0};}char*name=n->u.chamada.funcao->u.ident.nome;Simbolo*x=find(&s->tab,name);if(!x){adderr(s,SEM001,n->u.chamada.funcao,"Identificador “%s” não declarado neste escopo.",name);for(size_t i=0;i<n->u.chamada.argumentos.n;i++)expr(s,n->u.chamada.argumentos.v[i],"como argumento");return(Tipo){TY_ERRO,0};}if(strcmp(x->categoria,"FUNÇÃO")){adderr(s,SEM014,n->u.chamada.funcao,"“%s” não é uma função e não pode ser chamado.",name);for(size_t i=0;i<n->u.chamada.argumentos.n;i++)expr(s,n->u.chamada.argumentos.v[i],"como argumento");return(Tipo){TY_ERRO,0};}n->simbolo=x;n->u.chamada.funcao->simbolo=x;x->usado=1;size_t na=n->u.chamada.argumentos.n;if(na!=x->nparams)adderr(s,SEM007,n,"“%s” espera %zu %s, mas recebeu %zu.",name,x->nparams,x->nparams==1?"argumento":"argumentos",na);for(size_t i=0;i<na;i++){Tipo ta=expr(s,n->u.chamada.argumentos.v[i],"como argumento");if(i<x->nparams&&!comp(x->params[i],ta))adderr(s,SEM008,n->u.chamada.argumentos.v[i],"Argumento %zu de “%s”: esperado %s, recebido %s (expressão “%s”).",i+1,name,tipo_str(x->params[i]),tipo_str(ta),texto(s,n->u.chamada.argumentos.v[i]));}return x->tipo;}
-static Tipo expr_index(Semantic*s,No*n){Tipo v=expr(s,n->u.indice.vetor,"como operando"),i=expr(s,n->u.indice.indice,"como índice");if(!erro_t(i)&&!inteiro(i))adderr(s,SEM006,n->u.indice.indice,"Índice do vetor “%s” deve ser int; recebeu %s (expressão “%s”).",texto(s,n->u.indice.vetor),tipo_str(i),texto(s,n->u.indice.indice));if(erro_t(v))return v;if(!v.vetor){adderr(s,SEM014,n->u.indice.vetor,"“%s” não é um vetor e não pode ser indexado (tipo %s).",texto(s,n->u.indice.vetor),tipo_str(v));return(Tipo){TY_ERRO,0};}if(n->u.indice.vetor->kind==N_IDENT&&n->u.indice.vetor->simbolo){Simbolo*x=n->u.indice.vetor->simbolo;int ok=0;long long ix=constint(n->u.indice.indice,&ok);if(x->tem_tamanho&&ok&&(ix<0||ix>=x->tamanho))adderr(s,SEM006,n->u.indice.indice,"Índice %lld fora dos limites do vetor “%s” (tamanho %lld).",ix,texto(s,n->u.indice.vetor),x->tamanho);}return(Tipo){v.base,0};}
-static Tipo expr(Semantic*s,No*n,const char*ctx){if(!n)return(Tipo){TY_ERRO,0};Tipo t;switch(n->kind){case N_LITERAL:t=expr_lit(s,n);break;case N_IDENT:t=expr_id(s,n);break;case N_ATRIB:t=expr_assign(s,n);break;case N_UNARIA:t=expr_un(s,n);break;case N_BINARIA:t=expr_bin(s,n);break;case N_CHAMADA:t=expr_call(s,n);break;case N_INDICE:t=expr_index(s,n);break;default:t=(Tipo){TY_ERRO,0};}if(t.base==TY_VOID&&ctx){const char*name=n->kind==N_CHAMADA&&n->u.chamada.funcao->kind==N_IDENT?n->u.chamada.funcao->u.ident.nome:texto(s,n);adderr(s,SEM012,n,"Função “%s” não produz valor (retorno void) e não pode ser usada %s.",name,ctx);t=(Tipo){TY_ERRO,0};}n->tipo_sem=t.base;return t;}
-static void visit_decl(Semantic*s,No*n){Tipo t;if(!strcmp(n->u.declvar.tipo_base,"void")){adderr(s,SEM014,n,"Variável “%s” não pode ter tipo void.",n->u.declvar.nome);t=(Tipo){TY_ERRO,0};}else{BaseType b=!strcmp(n->u.declvar.tipo_base,"int")?TY_INT:!strcmp(n->u.declvar.tipo_base,"float")?TY_FLOAT:!strcmp(n->u.declvar.tipo_base,"bool")?TY_BOOL:TY_CHAR;t=(Tipo){b,n->u.declvar.tamanho!=NULL};}long long tam=0;int ok=0;if(n->u.declvar.tamanho){Tipo z=expr(s,n->u.declvar.tamanho,"como tamanho de vetor");if(!erro_t(z)&&!inteiro(z))adderr(s,SEM006,n->u.declvar.tamanho,"Tamanho do vetor “%s” deve ser int; recebeu %s (expressão “%s”).",n->u.declvar.nome,tipo_str(z),texto(s,n->u.declvar.tamanho));tam=constint(n->u.declvar.tamanho,&ok);if(ok&&tam<=0)adderr(s,SEM006,n->u.declvar.tamanho,"Tamanho do vetor “%s” deve ser positivo; recebeu %lld.",n->u.declvar.nome,tam);}if(n->u.declvar.inicializador){Tipo q=expr(s,n->u.declvar.inicializador,"como inicializador");if(t.vetor)adderr(s,SEM003,n->u.declvar.inicializador,"Vetor “%s” não pode receber inicializador.",n->u.declvar.nome);else if(!comp(t,q))adderr(s,SEM003,n->u.declvar.inicializador,"Não é possível atribuir %s a %s sem conversão permitida (destino “%s”; expressão “%s”).",tipo_str(q),tipo_str(t),n->u.declvar.nome,texto(s,n->u.declvar.inicializador));}Simbolo*x=calloc(1,sizeof* x);x->nome=strdup(n->u.declvar.nome);x->categoria=strdup(t.vetor?"VETOR":"VARIÁVEL");x->tipo=t;x->nivel=(int)s->tab.n-1;x->linha=n->linha;x->coluna=n->coluna;x->tem_tamanho=ok;x->tamanho=tam;x->inicializado=n->u.declvar.inicializador!=NULL;n->simbolo=x;declare(s,x);}
-static void visit_func(Semantic*s,No*n){Simbolo*x=calloc(1,sizeof* x);x->nome=strdup(n->u.funcao.nome);x->categoria=strdup("FUNÇÃO");BaseType b=!strcmp(n->u.funcao.tipo_retorno,"int")?TY_INT:!strcmp(n->u.funcao.tipo_retorno,"float")?TY_FLOAT:!strcmp(n->u.funcao.tipo_retorno,"bool")?TY_BOOL:!strcmp(n->u.funcao.tipo_retorno,"char")?TY_CHAR:TY_VOID;x->tipo=(Tipo){b,0};x->linha=n->u.funcao.linha_nome;x->coluna=n->u.funcao.coluna_nome;x->nparams=n->u.funcao.parametros.n;x->params=calloc(x->nparams,sizeof(Tipo));for(size_t i=0;i<x->nparams;i++){No*p=n->u.funcao.parametros.v[i];BaseType pb=!strcmp(p->u.parametro.tipo_base,"int")?TY_INT:!strcmp(p->u.parametro.tipo_base,"float")?TY_FLOAT:!strcmp(p->u.parametro.tipo_base,"bool")?TY_BOOL:!strcmp(p->u.parametro.tipo_base,"char")?TY_CHAR:TY_VOID;x->params[i]=(Tipo){pb,p->u.parametro.eh_vetor};}n->simbolo=x;declare(s,x);s->funcao_atual=x;opens(&s->tab);for(size_t i=0;i<n->u.funcao.parametros.n;i++){No*p=n->u.funcao.parametros.v[i];Tipo pt=x->params[i];if(pt.base==TY_VOID){adderr(s,SEM014,p,"Parâmetro “%s” não pode ter tipo void.",p->u.parametro.nome);pt=(Tipo){TY_ERRO,0};}Simbolo*y=calloc(1,sizeof* y);y->nome=strdup(p->u.parametro.nome);y->categoria=strdup("PARÂMETRO");y->tipo=pt;y->nivel=(int)s->tab.n-1;y->linha=p->linha;y->coluna=p->coluna;y->inicializado=1;p->simbolo=y;declare(s,y);}for(size_t i=0;i<n->u.funcao.corpo->u.bloco.comandos.n;i++)visit(s,n->u.funcao.corpo->u.bloco.comandos.v[i]);if(x->tipo.base!=TY_VOID&&falls(n->u.funcao.corpo))adderr(s,SEM011,n,"A função “%s” pode terminar sem retornar %s; o fim do corpo é alcançado sem executar return.",n->u.funcao.nome,tipo_str(x->tipo));closes(&s->tab);s->funcao_atual=NULL;}
-static int falls(No*n){if(!n)return 1;if(n->kind==N_RETURN)return 0;if(n->kind==N_BLOCO){for(size_t i=0;i<n->u.bloco.comandos.n;i++)if(!falls(n->u.bloco.comandos.v[i]))return 0;return 1;}if(n->kind==N_IF){if(!falls(n->u.ifn.entao))return n->u.ifn.senao?falls(n->u.ifn.senao):1;return 1;}if((n->kind==N_WHILE||n->kind==N_FOR)&&infinite(n))return 0;return 1;}
-static void visit(Semantic*s,No*n){if(!n)return;switch(n->kind){case N_PROGRAMA:for(size_t i=0;i<n->u.programa.declaracoes.n;i++){No*x=n->u.programa.declaracoes.v[i];if(x->kind==N_FUNCAO)visit_func(s,x);else if(x->kind==N_DECLVAR)visit_decl(s,x);else if(x->kind==N_LISTADECL)for(size_t j=0;j<x->u.listadecl.declaracoes.n;j++)visit_decl(s,x->u.listadecl.declaracoes.v[j]);else adderr(s,SEM014,x,"Comando fora de função.");}break;case N_BLOCO:opens(&s->tab);for(size_t i=0;i<n->u.bloco.comandos.n;i++)visit(s,n->u.bloco.comandos.v[i]);closes(&s->tab);break;case N_DECLVAR:visit_decl(s,n);break;case N_LISTADECL:for(size_t i=0;i<n->u.listadecl.declaracoes.n;i++)visit_decl(s,n->u.listadecl.declaracoes.v[i]);break;case N_IF:{Tipo t=expr(s,n->u.ifn.condicao,"como condição");if(!erro_t(t)&&!teq(t,(Tipo){TY_BOOL,0}))adderr(s,SEM005,n->u.ifn.condicao,"Condição de if deve ter tipo bool; recebeu %s (expressão “%s”).",tipo_str(t),texto(s,n->u.ifn.condicao));visit(s,n->u.ifn.entao);if(n->u.ifn.senao)visit(s,n->u.ifn.senao);break;}case N_WHILE:{Tipo t=expr(s,n->u.whilen.condicao,"como condição");if(!erro_t(t)&&!teq(t,(Tipo){TY_BOOL,0}))adderr(s,SEM005,n->u.whilen.condicao,"Condição de while deve ter tipo bool; recebeu %s (expressão “%s”).",tipo_str(t),texto(s,n->u.whilen.condicao));s->nivel_laco++;visit(s,n->u.whilen.corpo);s->nivel_laco--;break;}case N_FOR:if(n->u.forn.inicio)expr(s,n->u.forn.inicio,NULL);if(n->u.forn.condicao){Tipo t=expr(s,n->u.forn.condicao,"como condição");if(!erro_t(t)&&!teq(t,(Tipo){TY_BOOL,0}))adderr(s,SEM005,n->u.forn.condicao,"Condição de for deve ter tipo bool; recebeu %s (expressão “%s”).",tipo_str(t),texto(s,n->u.forn.condicao));}if(n->u.forn.passo)expr(s,n->u.forn.passo,NULL);s->nivel_laco++;visit(s,n->u.forn.corpo);s->nivel_laco--;break;case N_BREAK:if(!s->nivel_laco)adderr(s,SEM010,n,"Comando “break” fora de laço.");break;case N_CONTINUE:if(!s->nivel_laco)adderr(s,SEM010,n,"Comando “continue” fora de laço.");break;case N_RETURN:{Tipo e=s->funcao_atual?s->funcao_atual->tipo:(Tipo){TY_ERRO,0};if(!n->u.ret.expressao){if(e.base!=TY_VOID)adderr(s,SEM009,n,"Retorno sem valor na função “%s”, que deve retornar %s.",s->funcao_atual->nome,tipo_str(e));}else if(e.base==TY_VOID){expr(s,n->u.ret.expressao,NULL);adderr(s,SEM009,n->u.ret.expressao,"A função “%s” é void e não pode retornar valor (expressão “%s”).",s->funcao_atual->nome,texto(s,n->u.ret.expressao));}else{Tipo q=expr(s,n->u.ret.expressao,"como valor de retorno");if(!comp(e,q))adderr(s,SEM009,n->u.ret.expressao,"Retorno %s incompatível com o tipo %s da função “%s”; conversão implícita de %s para %s não permitida.",tipo_str(q),tipo_str(e),s->funcao_atual->nome,tipo_str(q),tipo_str(e));}break;}case N_PRINT:{No*a=n->u.printn.argumento;if(a->kind==N_LITERAL&&a->u.literal.tipo_literal==L_STRING){a->tipo_sem=TY_STRING;break;}Tipo t=expr(s,a,"como argumento de print");if(!erro_t(t)&&t.vetor)adderr(s,SEM014,a,"print não aceita um vetor inteiro (expressão “%s”).",texto(s,a));break;}case N_READ:destino(s,n->u.readn.alvo,"leitura");break;case N_EXPRSTMT:if(n->u.exprstmt.expressao)expr(s,n->u.exprstmt.expressao,NULL);break;default:break;}}
-Semantic*semantic_new(const char*f){Semantic*s=calloc(1,sizeof*s);s->fonte=f;size_t count=1;for(const char*p=f;*p;p++)if(*p=='\n')count++;s->nlin=count;s->inicio=calloc(count,sizeof(size_t));size_t j=1;for(size_t i=0;i<strlen(f);i++)if(f[i]=='\n'&&j<count)s->inicio[j++]=i+1;opens(&s->tab);return s;}
-DiagnosticoVec*semantic_analisar(Semantic*s,No*p){visit(s,p);Simbolo*m=find(&s->tab,"main");if(m&&m->categoria&&!strcmp(m->categoria,"FUNÇÃO")){if(m->tipo.base!=TY_INT)adderr_pos(s,SEM014,m->linha,m->coluna,"A função “main” deve retornar int.");if(m->nparams)adderr_pos(s,SEM014,m->linha,m->coluna,"A função “main” não deve ter parâmetros.");}for(size_t i=0;i<s->erros.n;i++)for(size_t j=i+1;j<s->erros.n;j++)if(s->erros.v[j].linha<s->erros.v[i].linha||(s->erros.v[j].linha==s->erros.v[i].linha&&s->erros.v[j].coluna<s->erros.v[i].coluna)){Diagnostico d=s->erros.v[i];s->erros.v[i]=s->erros.v[j];s->erros.v[j]=d;}return &s->erros;}
-void semantic_free(Semantic*s){if(!s)return;while(s->tab.n)closes(&s->tab);free(s->tab.v);free(s->inicio);for(size_t i=0;i<s->erros.n;i++){free(s->erros.v[i].codigo);free(s->erros.v[i].mensagem);}free(s->erros.v);free(s);}
+#include <stdlib.h>
+#include <string.h>
+
+/* ---------- Catálogo de códigos ---------- */
+/* Definidos pelo gabarito: */
+#define SEM001 "SEM001"  /* identificador não declarado */
+#define SEM002 "SEM002"  /* declaração duplicada */
+#define SEM003 "SEM003"  /* incompatibilidade de atribuição/conversão */
+#define SEM004 "SEM004"  /* operando de tipo inválido para o operador */
+#define SEM005 "SEM005"  /* condição não booleana */
+#define SEM006 "SEM006"  /* índice (ou tamanho) de vetor inválido */
+#define SEM007 "SEM007"  /* aridade incorreta */
+#define SEM008 "SEM008"  /* tipo de argumento incompatível */
+#define SEM009 "SEM009"  /* retorno incompatível */
+#define SEM010 "SEM010"  /* break/continue fora de laço */
+#define SEM011 "SEM011"  /* possível queda de função não void */
+#define SEM012 "SEM012"  /* chamada void usada como valor */
+#define SEM013 "SEM013"  /* destino não atribuível */
+#define SEM014 "SEM014"  /* uso inválido de símbolo ou tipo */
+#define SEM015 "SEM015"  /* divisão por zero constante */
+
+
+/* Representação de tipos */
+
+static const char *NOME_BASE[] = {
+    "int", "float", "bool", "char", "void", "string", "erro"
+};
+
+static Tipo tipo_de(Base base, int vetor)
+{
+    Tipo t;
+    t.base = base;
+    t.vetor = vetor;
+    return t;
+}
+
+#define INT    tipo_de(B_INT, 0)
+#define FLOAT  tipo_de(B_FLOAT, 0)
+#define BOOL   tipo_de(B_BOOL, 0)
+#define CHAR   tipo_de(B_CHAR, 0)
+#define VOID   tipo_de(B_VOID, 0)
+#define STRING tipo_de(B_STRING, 0)
+/* Tipo "coringa" usado após um erro, para não gerar erros em cascata. */
+#define ERRO   tipo_de(B_ERRO, 0)
+
+static int tipo_igual(Tipo a, Tipo b)
+{
+    return a.base == b.base && a.vetor == b.vetor;
+}
+
+static const char *tipo_str(Tipo t)
+{
+    return fmt("%s%s", NOME_BASE[t.base], t.vetor ? "[]" : "");
+}
+
+/* Converte o lexema de um tipo ("int", "float", ...) em Base. */
+static Base base_de(const char *nome)
+{
+    int i;
+    for (i = 0; i <= B_STRING; i++)
+        if (strcmp(nome, NOME_BASE[i]) == 0)
+            return (Base)i;
+    return B_ERRO;
+}
+
+static int eh_erro(Tipo t)
+{
+    return tipo_igual(t, ERRO);
+}
+
+static int eh_numerico(Tipo t)
+{
+    return !t.vetor && (t.base == B_INT || t.base == B_FLOAT || t.base == B_CHAR);
+}
+
+static int eh_inteiro(Tipo t)
+{
+    return !t.vetor && (t.base == B_INT || t.base == B_CHAR);
+}
+
+/* Conversões implícitas permitidas */
+static int conversao_implicita(Base destino, Base origem)
+{
+    return (destino == B_FLOAT && origem == B_INT)
+        || (destino == B_INT && origem == B_CHAR)
+        || (destino == B_FLOAT && origem == B_CHAR);
+}
+
+static int compativel(Tipo destino, Tipo origem)
+{
+    if (eh_erro(destino) || eh_erro(origem))
+        return 1;
+    if (destino.vetor || origem.vetor)
+        return tipo_igual(destino, origem);
+    if (destino.base == origem.base)
+        return destino.base != B_VOID && destino.base != B_STRING;
+    return conversao_implicita(destino.base, origem.base);
+}
+
+const char *plural(int n, const char *singular, const char *plural_)
+{
+    return fmt("%d %s", n, n == 1 ? singular : plural_);
+}
+
+
+/* Tabela de símbolos */
+
+typedef enum { CAT_VARIAVEL, CAT_PARAMETRO, CAT_VETOR, CAT_FUNCAO } Categoria;
+
+struct Simbolo {
+    const char *nome;
+    Categoria categoria;
+    Tipo tipo;            /* para FUNÇÃO, é o tipo de retorno */
+    int nivel;            /* nível léxico (0 = global) */
+    int linha, coluna;
+    Tipo *parametros;     /* tipos dos parâmetros (funções) */
+    int n_parametros;
+    Const tamanho;        /* tamanho constante do vetor, se conhecido */
+    int inicializado;
+    int usado;
+};
+
+static Simbolo *novo_simbolo(const char *nome, Categoria categoria, Tipo tipo,
+                             int nivel, int linha, int coluna)
+{
+    Simbolo *s = xmalloc(sizeof *s);
+    memset(s, 0, sizeof *s);
+    s->nome = nome;
+    s->categoria = categoria;
+    s->tipo = tipo;
+    s->nivel = nivel;
+    s->linha = linha;
+    s->coluna = coluna;
+    return s;
+}
+
+/* Pilha de escopos; cada escopo é uma lista de símbolos. */
+typedef struct {
+    Simbolo **itens;
+    int n, cap;
+} Escopo;
+
+static Escopo *escopos;
+static int n_escopos, cap_escopos;
+
+static int nivel_atual(void)
+{
+    return n_escopos - 1;
+}
+
+static void abrir_escopo(void)
+{
+    if (n_escopos == cap_escopos) {
+        cap_escopos = cap_escopos ? cap_escopos * 2 : 16;
+        escopos = xrealloc(escopos, (size_t)cap_escopos * sizeof *escopos);
+    }
+    memset(&escopos[n_escopos], 0, sizeof escopos[n_escopos]);
+    n_escopos++;
+}
+
+static void fechar_escopo(void)
+{
+    n_escopos--;
+}
+
+static void inserir(Simbolo *s)
+{
+    Escopo *e = &escopos[n_escopos - 1];
+    if (e->n == e->cap) {
+        e->cap = e->cap ? e->cap * 2 : 8;
+        e->itens = xrealloc(e->itens, (size_t)e->cap * sizeof *e->itens);
+    }
+    e->itens[e->n++] = s;
+}
+
+static Simbolo *buscar_no_escopo(Escopo *e, const char *nome)
+{
+    int i;
+    for (i = 0; i < e->n; i++)
+        if (strcmp(e->itens[i]->nome, nome) == 0)
+            return e->itens[i];
+    return NULL;
+}
+
+static Simbolo *buscar_no_escopo_atual(const char *nome)
+{
+    return buscar_no_escopo(&escopos[n_escopos - 1], nome);
+}
+
+static Simbolo *buscar(const char *nome)
+{
+    /* Do escopo mais interno para o mais externo: sombreamento léxico. */
+    int i;
+    for (i = n_escopos - 1; i >= 0; i--) {
+        Simbolo *s = buscar_no_escopo(&escopos[i], nome);
+        if (s)
+            return s;
+    }
+    return NULL;
+}
+
+
+/* Diagnósticos */
+
+
+Diagnostico *erros;
+int n_erros;
+static int cap_erros;
+
+static void erro_em(const char *codigo, int linha, int coluna, const char *mensagem)
+{
+    if (n_erros == cap_erros) {
+        cap_erros = cap_erros ? cap_erros * 2 : 16;
+        erros = xrealloc(erros, (size_t)cap_erros * sizeof *erros);
+    }
+    erros[n_erros].codigo = codigo;
+    erros[n_erros].linha = linha;
+    erros[n_erros].coluna = coluna;
+    erros[n_erros].mensagem = mensagem;
+    n_erros++;
+}
+
+static void erro(const char *codigo, No *no, const char *mensagem)
+{
+    erro_em(codigo, no->linha, no->coluna, mensagem);
+}
+
+/* "Em ordem de origem". Ordenação por inserção, que é estável: empates
+ * mantêm a ordem em que os erros foram detectados. */
+static void ordenar_erros(void)
+{
+    int i, j;
+    for (i = 1; i < n_erros; i++) {
+        Diagnostico atual = erros[i];
+        for (j = i - 1; j >= 0; j--) {
+            if (erros[j].linha < atual.linha
+                || (erros[j].linha == atual.linha && erros[j].coluna <= atual.coluna))
+                break;
+            erros[j + 1] = erros[j];
+        }
+        erros[j + 1] = atual;
+    }
+}
+
+
+/* Estado do analisador */
+
+static Simbolo *funcao_atual;   /* função sendo analisada */
+static int nivel_laco;          /* > 0 quando dentro de while/for */
+
+/* Trecho do código-fonte que originou a expressão. */
+static const char *texto(No *no)
+{
+    if (!no->tem_trecho)
+        return "";
+    return xstrndup(fonte + no->ini, no->fim - no->ini);
+}
+
+static Tipo expr(No *no, const char *contexto);
+static void visitar(No *no);
+
+/* Contextos de uso de um valor */
+#define COMO_VALOR "como valor"
+
+
+/* Funções auxiliares (análise estática) */
+
+/* Avalia expressões numéricas constantes; ok=0 se não for constante. */
+static Const valor_constante(No *no)
+{
+    Const nada;
+    memset(&nada, 0, sizeof nada);
+
+    if (no->tipo_no == N_LITERAL
+        && (strcmp(no->tipo_literal, "int") == 0 || strcmp(no->tipo_literal, "real") == 0))
+        return no->valor_lit;
+
+    if (no->tipo_no == N_UNARIA && strcmp(no->operador, "-") == 0) {
+        Const v = valor_constante(no->operando);
+        if (!v.ok)
+            return nada;
+        if (v.inteiro) v.i = -v.i;
+        else v.r = -v.r;
+        return v;
+    }
+
+    if (no->tipo_no == N_BINARIA
+        && (strcmp(no->operador, "+") == 0 || strcmp(no->operador, "-") == 0
+            || strcmp(no->operador, "*") == 0)) {
+        Const e = valor_constante(no->esquerda);
+        Const d = valor_constante(no->direita);
+        Const r;
+        char op = no->operador[0];
+        if (!e.ok || !d.ok)
+            return nada;
+        memset(&r, 0, sizeof r);
+        r.ok = 1;
+        if (e.inteiro && d.inteiro) {
+            r.inteiro = 1;
+            r.i = op == '+' ? e.i + d.i : op == '-' ? e.i - d.i : e.i * d.i;
+        } else {
+            double x = e.inteiro ? (double)e.i : e.r;
+            double y = d.inteiro ? (double)d.i : d.r;
+            r.r = op == '+' ? x + y : op == '-' ? x - y : x * y;
+        }
+        return r;
+    }
+    return nada;
+}
+
+static int const_eh_zero(Const c)
+{
+    return c.ok && (c.inteiro ? c.i == 0 : c.r == 0.0);
+}
+
+/* Há um break que sai DESTE laço? (ignora laços aninhados) */
+static int contem_break(No *no)
+{
+    int i;
+    switch (no->tipo_no) {
+    case N_BREAK:
+        return 1;
+    case N_BLOCO:
+        for (i = 0; i < no->lista.n; i++)
+            if (contem_break(no->lista.itens[i]))
+                return 1;
+        return 0;
+    case N_IF:
+        return contem_break(no->entao) || (no->senao && contem_break(no->senao));
+    default:
+        return 0;
+    }
+}
+
+/* while(true) ou for(;;) sem break: o fim do laço é inalcançável. */
+static int laco_infinito(No *no)
+{
+    No *cond = no->condicao;
+    int sempre = cond == NULL
+        || (cond->tipo_no == N_LITERAL && strcmp(cond->tipo_literal, "bool") == 0
+            && strcmp(cond->lexema, "true") == 0);
+    return sempre && !contem_break(no->corpo);
+}
+
+
+/* Cobertura de retornos */
+
+/* Marcador: "este comando não retorna", sem motivo específico. */
+static const char CAI_MARCADOR[] = "";
+#define CAI CAI_MARCADOR
+
+/* NULL se todo caminho por `no` executa return; senão, o motivo
+ * (ou CAI, quando não há um motivo mais específico). */
+static const char *motivo_queda(No *no)
+{
+    int i;
+
+    switch (no->tipo_no) {
+    case N_RETURN:
+        return NULL;
+
+    case N_BLOCO: {
+        const char **motivos;
+        if (no->lista.n == 0)
+            return CAI;
+        motivos = xmalloc((size_t)no->lista.n * sizeof *motivos);
+        for (i = 0; i < no->lista.n; i++)
+            motivos[i] = motivo_queda(no->lista.itens[i]);
+        for (i = 0; i < no->lista.n; i++)
+            if (motivos[i] == NULL)
+                return NULL;
+        /* Explica pelo último comando que tem um motivo específico. */
+        for (i = no->lista.n - 1; i >= 0; i--)
+            if (motivos[i] != CAI)
+                return motivos[i];
+        return CAI;
+    }
+
+    case N_IF: {
+        const char *cond = texto(no->condicao);
+        const char *m_entao = motivo_queda(no->entao);
+        const char *m_senao;
+        if (m_entao == CAI)
+            return fmt("o ramo em que “%s” é verdadeiro alcança o fim do corpo", cond);
+        if (m_entao != NULL)
+            return m_entao;
+        if (no->senao == NULL)
+            return fmt("o ramo em que “%s” é falso alcança o fim do corpo", cond);
+        m_senao = motivo_queda(no->senao);
+        if (m_senao == CAI)
+            return fmt("o ramo em que “%s” é falso alcança o fim do corpo", cond);
+        return m_senao;
+    }
+
+    case N_WHILE:
+    case N_FOR:
+        if (laco_infinito(no))
+            return NULL;   /* só sai por return: não alcança o fim */
+        return fmt("o laço %s pode terminar sem executar return "
+                   "e alcançar o fim do corpo",
+                   no->tipo_no == N_WHILE ? "while" : "for");
+
+    default:
+        return CAI;
+    }
+}
+
+
+/* Declarações, nomes e escopos */
+
+/* Insere no escopo atual, rejeitando duplicidade */
+static int declarar(Simbolo *simbolo)
+{
+    Simbolo *anterior = buscar_no_escopo_atual(simbolo->nome);
+    if (anterior) {
+        const char *descricao = anterior->categoria == CAT_FUNCAO
+            ? fmt("função de retorno %s", tipo_str(anterior->tipo))
+            : fmt("tipo %s", tipo_str(anterior->tipo));
+        erro_em(SEM002, simbolo->linha, simbolo->coluna,
+                fmt("“%s” já declarado neste escopo; declaração anterior na "
+                    "linha %d, coluna %d (%s).", simbolo->nome,
+                    anterior->linha, anterior->coluna, descricao));
+        return 0;
+    }
+    inserir(simbolo);
+    return 1;
+}
+
+static void visitar_declvar(No *no)
+{
+    Tipo tipo;
+    Const tamanho;
+    Simbolo *simbolo;
+
+    if (strcmp(no->tipo_base, "void") == 0) {
+        erro(SEM014, no, fmt("Variável “%s” não pode ter tipo void.", no->nome));
+        tipo = ERRO;
+    } else {
+        tipo = tipo_de(base_de(no->tipo_base), no->tamanho != NULL);
+    }
+
+    memset(&tamanho, 0, sizeof tamanho);
+    if (no->tamanho) {
+        Tipo t_tamanho = expr(no->tamanho, "como tamanho de vetor");
+        if (!eh_erro(t_tamanho) && !eh_inteiro(t_tamanho))
+            erro(SEM006, no->tamanho,
+                 fmt("Tamanho do vetor “%s” deve ser int; recebeu %s "
+                     "(expressão “%s”).", no->nome, tipo_str(t_tamanho),
+                     texto(no->tamanho)));
+        tamanho = valor_constante(no->tamanho);
+        if (tamanho.ok && tamanho.inteiro && tamanho.i <= 0)
+            erro(SEM006, no->tamanho,
+                 fmt("Tamanho do vetor “%s” deve ser positivo; recebeu %lld.",
+                     no->nome, tamanho.i));
+    }
+
+    /* O inicializador é analisado ANTES de inserir o nome:
+     * em "int x = x;" o x da direita não é o que está sendo declarado. */
+    if (no->inicializador) {
+        Tipo t_init = expr(no->inicializador, "como inicializador");
+        if (tipo.vetor)
+            erro(SEM003, no->inicializador,
+                 fmt("Vetor “%s” não pode receber inicializador.", no->nome));
+        else if (!compativel(tipo, t_init))
+            erro(SEM003, no->inicializador,
+                 fmt("Não é possível atribuir %s a %s sem conversão permitida "
+                     "(destino “%s”; expressão “%s”).", tipo_str(t_init),
+                     tipo_str(tipo), no->nome, texto(no->inicializador)));
+    }
+
+    simbolo = novo_simbolo(no->nome, tipo.vetor ? CAT_VETOR : CAT_VARIAVEL,
+                           tipo, nivel_atual(), no->linha, no->coluna);
+    simbolo->tamanho = tamanho;
+    simbolo->inicializado = no->inicializador != NULL;
+    no->simbolo = simbolo;
+    declarar(simbolo);
+}
+
+static void visitar_funcao(No *no)
+{
+    int i, n = no->lista.n;
+    Tipo *tipos_params = xmalloc((size_t)(n ? n : 1) * sizeof *tipos_params);
+    Simbolo *simbolo;
+
+    for (i = 0; i < n; i++) {
+        No *p = no->lista.itens[i];
+        tipos_params[i] = tipo_de(base_de(p->tipo_base), p->eh_vetor);
+    }
+
+    /* O símbolo fica na posição do NOME;
+     * o nó fica na posição do tipo de retorno. */
+    simbolo = novo_simbolo(no->nome, CAT_FUNCAO,
+                           tipo_de(base_de(no->tipo_base), 0), nivel_atual(),
+                           no->linha_nome, no->coluna_nome);
+    simbolo->parametros = tipos_params;
+    simbolo->n_parametros = n;
+    no->simbolo = simbolo;
+
+    /* A função entra na tabela antes do corpo: permite recursão. */
+    declarar(simbolo);
+
+    funcao_atual = simbolo;
+    abrir_escopo();
+
+    for (i = 0; i < n; i++) {
+        No *param = no->lista.itens[i];
+        Tipo tipo = tipos_params[i];
+        Simbolo *s;
+        if (strcmp(param->tipo_base, "void") == 0) {
+            erro(SEM014, param,
+                 fmt("Parâmetro “%s” não pode ter tipo void.", param->nome));
+            tipo = ERRO;
+        }
+        s = novo_simbolo(param->nome, CAT_PARAMETRO, tipo, nivel_atual(),
+                         param->linha, param->coluna);
+        s->inicializado = 1;
+        param->simbolo = s;
+        declarar(s);
+    }
+
+    /* Parâmetros e corpo compartilham o mesmo escopo (como em C):
+     * "int f(int a) { int a; }" é declaração duplicada. */
+    for (i = 0; i < no->corpo->lista.n; i++)
+        visitar(no->corpo->lista.itens[i]);
+
+    if (!tipo_igual(simbolo->tipo, VOID)) {
+        const char *motivo = motivo_queda(no->corpo);
+        if (motivo != NULL) {
+            if (motivo == CAI)
+                motivo = "o fim do corpo é alcançado sem executar return";
+            erro(SEM011, no,
+                 fmt("A função “%s” pode terminar sem retornar %s; %s.",
+                     no->nome, tipo_str(simbolo->tipo), motivo));
+        }
+    }
+
+    fechar_escopo();
+    funcao_atual = NULL;
+}
+
+static void visitar_programa(No *no)
+{
+    Simbolo *main_;
+    int i;
+
+    for (i = 0; i < no->lista.n; i++) {
+        No *decl = no->lista.itens[i];
+        if (decl->tipo_no == N_FUNCAO || decl->tipo_no == N_DECLVAR
+            || decl->tipo_no == N_LISTADECL)
+            visitar(decl);
+        else
+            erro(SEM014, decl, "Comando fora de função.");
+    }
+
+    /* A ausência de main não é erro (a suíte usa "principal"), mas,
+     * se main existir, sua assinatura é verificada. */
+    main_ = buscar("main");
+    if (main_ && main_->categoria == CAT_FUNCAO) {
+        if (!tipo_igual(main_->tipo, INT))
+            erro_em(SEM014, main_->linha, main_->coluna,
+                    "A função “main” deve retornar int.");
+        if (main_->n_parametros > 0)
+            erro_em(SEM014, main_->linha, main_->coluna,
+                    "A função “main” não deve ter parâmetros.");
+    }
+}
+
+
+/* Comandos e regras contextuais */
+
+static void condicao(No *e, const char *comando)
+{
+    Tipo tipo = expr(e, "como condição");
+    if (!eh_erro(tipo) && !tipo_igual(tipo, BOOL))
+        erro(SEM005, e, fmt("Condição de %s deve ter tipo bool; recebeu %s "
+                            "(expressão “%s”).", comando, tipo_str(tipo), texto(e)));
+}
+
+static void visitar_return(No *no)
+{
+    Tipo esperado = funcao_atual->tipo;
+    const char *nome = funcao_atual->nome;
+    Tipo tipo;
+
+    if (no->expressao == NULL) {
+        if (!tipo_igual(esperado, VOID))
+            erro(SEM009, no, fmt("Retorno sem valor na função “%s”, que deve "
+                                 "retornar %s.", nome, tipo_str(esperado)));
+        return;
+    }
+
+    if (tipo_igual(esperado, VOID)) {
+        expr(no->expressao, NULL);
+        erro(SEM009, no->expressao,
+             fmt("A função “%s” é void e não pode retornar valor "
+                 "(expressão “%s”).", nome, texto(no->expressao)));
+        return;
+    }
+
+    tipo = expr(no->expressao, "como valor de retorno");
+    if (!compativel(esperado, tipo))
+        erro(SEM009, no->expressao,
+             fmt("Retorno %s incompatível com o tipo %s da função “%s”; "
+                 "conversão implícita de %s para %s não permitida.",
+                 tipo_str(tipo), tipo_str(esperado), nome,
+                 tipo_str(tipo), tipo_str(esperado)));
+}
+
+static Tipo destino(No *alvo, const char *operacao);
+
+static void visitar(No *no)
+{
+    int i;
+    Tipo tipo;
+
+    switch (no->tipo_no) {
+    case N_PROGRAMA:
+        visitar_programa(no);
+        break;
+
+    case N_FUNCAO:
+        visitar_funcao(no);
+        break;
+
+    case N_DECLVAR:
+        visitar_declvar(no);
+        break;
+
+    case N_LISTADECL:
+        for (i = 0; i < no->lista.n; i++)
+            visitar(no->lista.itens[i]);
+        break;
+
+    case N_BLOCO:
+        /* Todo bloco interno cria um escopo próprio (sombreamento). */
+        abrir_escopo();
+        for (i = 0; i < no->lista.n; i++)
+            visitar(no->lista.itens[i]);
+        fechar_escopo();
+        break;
+
+    case N_IF:
+        condicao(no->condicao, "if");
+        visitar(no->entao);
+        if (no->senao)
+            visitar(no->senao);
+        break;
+
+    case N_WHILE:
+        condicao(no->condicao, "while");
+        nivel_laco++;
+        visitar(no->corpo);
+        nivel_laco--;
+        break;
+
+    case N_FOR:
+        if (no->inicio)
+            expr(no->inicio, NULL);
+        if (no->condicao)
+            condicao(no->condicao, "for");
+        if (no->passo)
+            expr(no->passo, NULL);
+        nivel_laco++;
+        visitar(no->corpo);
+        nivel_laco--;
+        break;
+
+    case N_BREAK:
+        if (nivel_laco == 0)
+            erro(SEM010, no, "Comando “break” fora de laço.");
+        break;
+
+    case N_CONTINUE:
+        if (nivel_laco == 0)
+            erro(SEM010, no, "Comando “continue” fora de laço.");
+        break;
+
+    case N_RETURN:
+        visitar_return(no);
+        break;
+
+    case N_PRINT:
+        if (no->argumento->tipo_no == N_LITERAL
+            && strcmp(no->argumento->tipo_literal, "string") == 0) {
+            no->argumento->tipo = STRING;   /* cadeia só é aceita aqui */
+            break;
+        }
+        tipo = expr(no->argumento, "como argumento de print");
+        if (!eh_erro(tipo) && tipo.vetor)
+            erro(SEM014, no->argumento,
+                 fmt("print não aceita um vetor inteiro (expressão “%s”).",
+                     texto(no->argumento)));
+        break;
+
+    case N_READ:
+        destino(no->alvo, "leitura");
+        break;
+
+    case N_EXPRSTMT:
+        /* NULL: chamada void permitida, o valor é descartado. */
+        if (no->expressao)
+            expr(no->expressao, NULL);
+        break;
+
+    default:
+        break;
+    }
+}
+
+
+/* Expressões e tipos */
+
+static Tipo expr_literal(No *no)
+{
+    if (strcmp(no->tipo_literal, "string") == 0) {
+        size_t len = strlen(no->lexema);
+        const char *interno = xstrndup(no->lexema + 1, len >= 2 ? len - 2 : 0);
+        erro(SEM014, no, fmt("Cadeia “%s” só é permitida como argumento de print.",
+                             interno));
+        return ERRO;
+    }
+    if (strcmp(no->tipo_literal, "int") == 0)  return INT;
+    if (strcmp(no->tipo_literal, "real") == 0) return FLOAT;
+    if (strcmp(no->tipo_literal, "bool") == 0) return BOOL;
+    return CHAR;
+}
+
+static Tipo expr_identificador(No *no)
+{
+    Simbolo *simbolo = buscar(no->nome);
+    if (!simbolo) {
+        erro(SEM001, no, fmt("Identificador “%s” não declarado neste escopo.",
+                             no->nome));
+        return ERRO;
+    }
+
+    no->simbolo = simbolo;
+    if (simbolo->categoria == CAT_FUNCAO) {
+        erro(SEM014, no, fmt("“%s” é uma função e não pode ser usada sem chamada.",
+                             no->nome));
+        return ERRO;
+    }
+
+    simbolo->usado = 1;
+    return simbolo->tipo;
+}
+
+/* Valida o lado esquerdo de atribuição ou o alvo de read. */
+static Tipo destino(No *alvo, const char *operacao)
+{
+    const char *prefixo = fmt("Destino de %s não é atribuível", operacao);
+    const char *descricao;
+
+    if (alvo->tipo_no == N_IDENTIFICADOR) {
+        Simbolo *simbolo = buscar(alvo->nome);
+        if (!simbolo) {
+            erro(SEM001, alvo, fmt("Identificador “%s” não declarado neste escopo.",
+                                   alvo->nome));
+            return ERRO;
+        }
+        alvo->simbolo = simbolo;
+        if (simbolo->categoria == CAT_FUNCAO) {
+            erro(SEM013, alvo, fmt("%s; “%s” designa uma função, não uma variável "
+                                   "ou elemento de vetor.", prefixo, alvo->nome));
+            return ERRO;
+        }
+        if (simbolo->tipo.vetor) {
+            erro(SEM013, alvo, fmt("%s; “%s” designa um vetor inteiro, não uma "
+                                   "variável ou elemento de vetor.",
+                                   prefixo, alvo->nome));
+            return ERRO;
+        }
+        simbolo->inicializado = 1;
+        alvo->tipo = simbolo->tipo;
+        return simbolo->tipo;
+    }
+
+    if (alvo->tipo_no == N_INDICE)
+        return expr(alvo, COMO_VALOR);
+
+    /* Qualquer outra expressão: analisa (para achar erros internos) e
+     * rejeita como destino. */
+    expr(alvo, NULL);
+    if (alvo->tipo_no == N_LITERAL) {
+        const char *t = alvo->tipo_literal;
+        descricao = strcmp(t, "int") == 0 ? "o literal inteiro"
+                  : strcmp(t, "real") == 0 ? "o literal real"
+                  : strcmp(t, "bool") == 0 ? "o literal booleano"
+                  : strcmp(t, "char") == 0 ? "o literal caractere"
+                  : "a cadeia";
+    } else if (alvo->tipo_no == N_CHAMADA) {
+        descricao = "a chamada";
+    } else {
+        descricao = "a expressão";
+    }
+    erro(SEM013, alvo, fmt("%s; %s “%s” não designa uma variável ou elemento "
+                           "de vetor.", prefixo, descricao, texto(alvo)));
+    return ERRO;
+}
+
+static Tipo expr_atribuicao(No *no)
+{
+    Tipo t_valor = expr(no->valor, "como expressão de atribuição");
+    Tipo t_alvo = destino(no->alvo, "atribuição");
+
+    if (eh_erro(t_alvo) || eh_erro(t_valor))
+        return ERRO;
+    if (!compativel(t_alvo, t_valor)) {
+        erro(SEM003, no->valor,
+             fmt("Não é possível atribuir %s a %s sem conversão permitida "
+                 "(destino “%s”; expressão “%s”).", tipo_str(t_valor),
+                 tipo_str(t_alvo), texto(no->alvo), texto(no->valor)));
+        return ERRO;
+    }
+    return t_alvo;
+}
+
+static Tipo expr_unaria(No *no)
+{
+    Tipo tipo = expr(no->operando, "como operando");
+    if (eh_erro(tipo))
+        return ERRO;
+
+    if (strcmp(no->operador, "!") == 0) {
+        if (!tipo_igual(tipo, BOOL)) {
+            erro(SEM004, no, fmt("Operador “!” exige operando bool; recebeu %s "
+                                 "(expressão “%s”).", tipo_str(tipo), texto(no)));
+            return ERRO;
+        }
+        return BOOL;
+    }
+
+    /* "-" unário */
+    if (!eh_numerico(tipo)) {
+        erro(SEM004, no, fmt("Operador “-” exige operando numérico; recebeu %s "
+                             "(expressão “%s”).", tipo_str(tipo), texto(no)));
+        return ERRO;
+    }
+    return tipo_igual(tipo, FLOAT) ? FLOAT : INT;
+}
+
+static void checar_divisor(No *no)
+{
+    if (const_eh_zero(valor_constante(no->direita)))
+        erro(SEM015, no->direita,
+             fmt("Divisão por zero constante (expressão “%s”).", texto(no)));
+}
+
+static Tipo rejeitar_binaria(No *no, const char *exigencia, Tipo te, Tipo td)
+{
+    erro(SEM004, no, fmt("Operador “%s” %s; recebeu %s e %s (expressão “%s”).",
+                         no->operador, exigencia, tipo_str(te), tipo_str(td),
+                         texto(no)));
+    return ERRO;
+}
+
+static Tipo expr_binaria(No *no)
+{
+    const char *op = no->operador;
+    Tipo te = expr(no->esquerda, "como operando");
+    Tipo td = expr(no->direita, "como operando");
+
+    if (eh_erro(te) || eh_erro(td))
+        return ERRO;
+
+    if (strcmp(op, "&&") == 0 || strcmp(op, "||") == 0) {
+        if (!tipo_igual(te, BOOL) || !tipo_igual(td, BOOL))
+            return rejeitar_binaria(no, "exige operandos bool", te, td);
+        return BOOL;
+    }
+
+    if (strcmp(op, "==") == 0 || strcmp(op, "!=") == 0) {
+        if (eh_numerico(te) && eh_numerico(td))
+            return BOOL;
+        if (tipo_igual(te, td) && !te.vetor)
+            return BOOL;
+        return rejeitar_binaria(no, "exige operandos de tipos comparáveis", te, td);
+    }
+
+    if (strcmp(op, "<") == 0 || strcmp(op, ">") == 0
+        || strcmp(op, "<=") == 0 || strcmp(op, ">=") == 0) {
+        if (!(eh_numerico(te) && eh_numerico(td)))
+            return rejeitar_binaria(no, "exige operandos numéricos", te, td);
+        return BOOL;
+    }
+
+    if (strcmp(op, "%") == 0) {
+        if (!(eh_inteiro(te) && eh_inteiro(td)))
+            return rejeitar_binaria(no, "exige operandos inteiros", te, td);
+        checar_divisor(no);
+        return INT;
+    }
+
+    /* + - * / */
+    if (!(eh_numerico(te) && eh_numerico(td)))
+        return rejeitar_binaria(no, "exige operandos numéricos", te, td);
+    if (strcmp(op, "/") == 0)
+        checar_divisor(no);
+    return (tipo_igual(te, FLOAT) || tipo_igual(td, FLOAT)) ? FLOAT : INT;
+}
+
+static Tipo *analisar_argumentos(No *no)
+{
+    int i, n = no->lista.n;
+    Tipo *tipos = xmalloc((size_t)(n ? n : 1) * sizeof *tipos);
+    for (i = 0; i < n; i++)
+        tipos[i] = expr(no->lista.itens[i], "como argumento");
+    return tipos;
+}
+
+static Tipo expr_chamada(No *no)
+{
+    const char *nome;
+    Simbolo *simbolo;
+    Tipo *tipos_args;
+    int i, n_args = no->lista.n;
+
+    if (no->funcao->tipo_no != N_IDENTIFICADOR) {
+        erro(SEM014, no, fmt("Apenas funções nomeadas podem ser chamadas "
+                             "(expressão “%s”).", texto(no)));
+        analisar_argumentos(no);
+        return ERRO;
+    }
+
+    nome = no->funcao->nome;
+    simbolo = buscar(nome);
+    if (!simbolo) {
+        erro(SEM001, no->funcao, fmt("Identificador “%s” não declarado neste "
+                                     "escopo.", nome));
+        analisar_argumentos(no);
+        return ERRO;
+    }
+    if (simbolo->categoria != CAT_FUNCAO) {
+        erro(SEM014, no->funcao, fmt("“%s” não é uma função e não pode ser "
+                                     "chamado.", nome));
+        analisar_argumentos(no);
+        return ERRO;
+    }
+
+    no->funcao->simbolo = simbolo;
+    no->simbolo = simbolo;
+    simbolo->usado = 1;
+
+    tipos_args = analisar_argumentos(no);
+
+    if (n_args != simbolo->n_parametros) {
+        erro(SEM007, no, fmt("“%s” espera %s, mas recebeu %d.", nome,
+                             plural(simbolo->n_parametros, "argumento", "argumentos"),
+                             n_args));
+    } else {
+        for (i = 0; i < n_args; i++) {
+            if (!compativel(simbolo->parametros[i], tipos_args[i]))
+                erro(SEM008, no->lista.itens[i],
+                     fmt("Argumento %d de “%s”: esperado %s, recebido %s "
+                         "(expressão “%s”).", i + 1, nome,
+                         tipo_str(simbolo->parametros[i]), tipo_str(tipos_args[i]),
+                         texto(no->lista.itens[i])));
+        }
+    }
+    return simbolo->tipo;
+}
+
+static Tipo expr_indice(No *no)
+{
+    Tipo t_vetor = expr(no->vetor, "como operando");
+    Tipo t_indice = expr(no->indice, "como índice");
+    const char *nome_vetor = texto(no->vetor);
+    Simbolo *simbolo;
+    Const indice;
+
+    if (!eh_erro(t_indice) && !eh_inteiro(t_indice))
+        erro(SEM006, no->indice,
+             fmt("Índice do vetor “%s” deve ser int; recebeu %s (expressão “%s”).",
+                 nome_vetor, tipo_str(t_indice), texto(no->indice)));
+
+    if (eh_erro(t_vetor))
+        return ERRO;
+    if (!t_vetor.vetor) {
+        erro(SEM014, no->vetor, fmt("“%s” não é um vetor e não pode ser indexado "
+                                    "(tipo %s).", nome_vetor, tipo_str(t_vetor)));
+        return ERRO;
+    }
+
+    /* Limites: verificáveis em compilação quando índice e tamanho são
+     * constantes inteiras. */
+    simbolo = no->vetor->tipo_no == N_IDENTIFICADOR ? no->vetor->simbolo : NULL;
+    indice = valor_constante(no->indice);
+    if (simbolo && simbolo->tamanho.ok && simbolo->tamanho.inteiro
+        && indice.ok && indice.inteiro
+        && !(indice.i >= 0 && indice.i < simbolo->tamanho.i))
+        erro(SEM006, no->indice,
+             fmt("Índice %lld fora dos limites do vetor “%s” (tamanho %lld).",
+                 indice.i, nome_vetor, simbolo->tamanho.i));
+
+    return tipo_de(t_vetor.base, 0);
+}
+
+/* Analisa uma expressão, anota no->tipo e devolve o tipo.
+ * `contexto` descreve onde o valor é usado (para o SEM012);
+ * NULL significa posição de comando: void é permitido. */
+static Tipo expr(No *no, const char *contexto)
+{
+    Tipo tipo;
+
+    switch (no->tipo_no) {
+    case N_LITERAL:       tipo = expr_literal(no);       break;
+    case N_IDENTIFICADOR: tipo = expr_identificador(no); break;
+    case N_ATRIBUICAO:    tipo = expr_atribuicao(no);    break;
+    case N_UNARIA:        tipo = expr_unaria(no);        break;
+    case N_BINARIA:       tipo = expr_binaria(no);       break;
+    case N_CHAMADA:       tipo = expr_chamada(no);       break;
+    case N_INDICE:        tipo = expr_indice(no);        break;
+    default:              tipo = ERRO;                   break;
+    }
+
+    if (tipo_igual(tipo, VOID) && contexto != NULL) {
+        const char *nome = (no->tipo_no == N_CHAMADA
+                            && no->funcao->tipo_no == N_IDENTIFICADOR)
+            ? no->funcao->nome : texto(no);
+        erro(SEM012, no, fmt("Função “%s” não produz valor (retorno void) e não "
+                             "pode ser usada %s.", nome, contexto));
+        tipo = ERRO;
+    }
+
+    no->tipo = tipo;
+    return tipo;
+}
+
+void analisar_semantica(No *programa)
+{
+    n_escopos = 0;
+    abrir_escopo();   /* escopo global */
+    funcao_atual = NULL;
+    nivel_laco = 0;
+    visitar(programa);
+    ordenar_erros();
+}
