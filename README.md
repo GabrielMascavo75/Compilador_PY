@@ -1,6 +1,8 @@
-# Compilador_PY_C
-Compilador em python e C para receber linguagem C  
-**Feito pelos alunos:** Cauan Lemos Souza, Filipe Valle Moreira, Gabriel Macedo de Araújo Vieira e Guilherme Pinheiro
+# Projeto MINIC
+**Feito pelos alunos:** Cauan Lemos Souza, Filipe Valle Moreira, Gabriel Macedo de Araújo Vieira e Guilherme Pinheiro  
+
+ O MINIC é linguagem educacional inspirada em um subconjunto de C, projetada para construção incremental de um compilador. Esta especificação funciona como contrato comum entre as quatro etapas do projeto: análise sintática e AST(árvore abstrata); análise semântica e representação intermediária; geração de código e otimização.  
+ A versão mínima contempla variáveis tipadas, funções, escopo léxico, vetores unidimensionais, estruturas condicionais e de repetição, operadores aritméticos, relacionais e lógicos, entrada e saída simples e comentários.
   
 # Apresentação sobre o Analisador Léxico
 
